@@ -1,0 +1,21 @@
+:root { font-family: system-ui, sans-serif; color: #18212a; background: #f6f7f9; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header { grid-column: 1 / -1; padding: 1rem 1.5rem; background: #17243a; color: white; }
+header p { margin-bottom: 0; }
+.shell { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); }
+.chat, .references { padding: 1.5rem; }
+.references { background: white; border-left: 1px solid #ddd; }
+form { display: grid; gap: .75rem; }
+textarea { width: 100%; padding: .75rem; resize: vertical; }
+button { width: fit-content; padding: .65rem 1rem; border: 0; border-radius: .35rem; background: #315a9d; color: white; }
+button:focus-visible, textarea:focus-visible, a:focus-visible { outline: 3px solid #efb53f; outline-offset: 2px; }
+.error { color: #a11; }
+.summary { font-size: 1.15rem; font-weight: 700; }
+.clarification { border-left: 4px solid #d99b14; padding-left: .75rem; }
+.citation { border-top: 1px solid #ddd; padding-top: .5rem; }
+.card img { width: 100%; max-width: 220px; border-radius: 8px; }
+@media (max-width: 800px) {
+  .shell { grid-template-columns: 1fr; }
+  .references { border-left: 0; border-top: 1px solid #ddd; }
+}
