@@ -45,7 +45,7 @@ Ingestion validates a plausible rule count, computes a SHA-256 checksum, writes 
 
 ## Configuration
 
-Copy `.env.example` to `.env`. Required non-mock provider settings are `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `SCRYFALL_USER_AGENT`, `DATABASE_PATH`, and `FRONTEND_ORIGIN`.
+Copy `.env.example` to `.env`. The default `LLM_PROVIDER=mock` mode provides evidence-grounded explanations for supported common mechanics from a small curated rule excerpt set. To enable broader generated answers, set `LLM_PROVIDER=openai-compatible`, `LLM_API_KEY`, and `LLM_MODEL`; `LLM_BASE_URL` defaults to the OpenAI API and can point to another OpenAI-compatible endpoint. Never put provider keys in frontend configuration.
 
 ## API
 
@@ -56,4 +56,4 @@ Copy `.env.example` to `.env`. Required non-mock provider settings are `LLM_PROV
 
 ## Limitations
 
-The MVP uses local lexical retrieval rather than a formal rules engine or semantic embeddings. Generated explanations must be verified against the displayed card text and official rules. Card lookup also requires network access unless cached provider data is added.
+The MVP uses local lexical retrieval rather than a formal rules engine or semantic embeddings. Without an LLM provider, the backend answers supported interactions from curated rules summaries and reports insufficient evidence for unsupported topics rather than returning unrelated rules. Run the rules ingestion command to search the full Comprehensive Rules dataset. Generated explanations must be verified against the displayed card text and official rules. Card lookup also requires network access unless cached provider data is added.

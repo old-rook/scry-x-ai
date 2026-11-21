@@ -12,11 +12,39 @@ def extract_name_candidates(question: str) -> list[str]:
         "Blood Moon", "Urza's Saga", "Darksteel Citadel", "Island", "Forest",
         "Lightning Bolt", "Counterspell", "Ancient Tomb",
     )
-    candidates = []
+    ignored_words = {
+        "a", "an", "can", "could", "does", "double", "explain", "first",
+        "how", "i", "is", "it", "please", "should", "strike", "the", "what",
+        "when", "where", "which", "who", "why", "would",
+    }
+    candidates = list(known)
     folded = normalize_card_name(question)
-    for name in known:
-        if normalize_card_name(name) in folded:
-            candidates.append(name)
+    candidates = [
+        name for name in candidates
+        if normalize_card_name(name) in folded
+    ]
+
+    title_pattern = re.compile(
+        r"(?<!\w)[A-Z][A-Za-z0-9,'’\-]*(?:\s+(?:(?:of|the|and|in|to|for|a|an)|[A-Z][A-Za-z0-9,'’\-]*))*"
+    )
+    for match in title_pattern.finditer(question):
+        phrase = match.group(0)
+        for part in re.split(r"\s+(?:and|or)\s+", phrase):
+            words = part.split()
+            while words and words[0].casefold() in ignored_words:
+                words.pop(0)
+            while words and words[-1].casefold() in {
+                "affect", "interact", "interacts", "happen", "happens", "work", "works",
+                "a", "an", "and", "for", "in", "of", "or", "the", "to",
+            }:
+                words.pop()
+            candidate = " ".join(words).strip()
+            if not candidate or all(word.casefold() in ignored_words for word in words):
+                continue
+            if candidate.casefold() in {"deathtouch", "trample", "double strike"}:
+                continue
+            if candidate not in candidates:
+                candidates.append(candidate)
     return candidates
 
 

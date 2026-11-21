@@ -25,3 +25,15 @@ def test_validator_rejects_unknown_evidence():
     except ValueError:
         return
     raise AssertionError("Unknown citation was accepted")
+
+
+def test_validator_rejects_wrong_evidence_kind():
+    try:
+        validate_answer({
+            "status": "answered",
+            "summary": "Unsupported.",
+            "citations": [{"evidence_id": "rule-305-7", "kind": "card_text"}],
+        }, {"rules": [{"evidence_id": "rule-305-7"}], "rulings": [], "cards": []})
+    except ValueError:
+        return
+    raise AssertionError("Citation with the wrong evidence type was accepted")

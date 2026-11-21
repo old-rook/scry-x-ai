@@ -1,7 +1,14 @@
+import hashlib
 import os
 import sqlite3
 import re
 from dataclasses import dataclass
+from .builtin_rules import (
+    BUILTIN_RULES,
+    SOURCE_URL,
+    SOURCE_VERSION_DATE,
+    rule_ids_for_question,
+)
 
 
 @dataclass
@@ -73,26 +80,43 @@ class RulesRepository:
 
     def ensure_sample_version(self) -> dict:
         version = self.active_version()
-        if version:
+        if version and version["version_id"] != "cr-mvp-local":
             return version
         now = "2026-11-21T00:00:00Z"
-        version_id = "cr-mvp-local"
-        source_url = "https://magic.wizards.com/en/rules"
+        version_id = "cr-curated-2026-11-06"
+        checksum = hashlib.sha256(
+            "\n".join(rule.summary for rule in BUILTIN_RULES).encode("utf-8")
+        ).hexdigest()
         with self.connect() as con:
-            con.execute(
-                "INSERT OR IGNORE INTO rules_versions VALUES (?, ?, ?, ?, ?, 'active')",
-                (version_id, source_url, "2026-11-21", now, "local-development",),
-            )
-            sample_rules = [
-                ("100.1", None, "General", "These Magic rules apply to the game."),
-                ("103.1", None, "Starting the Game", "The Magic game is a competitive game in which the players play with decks."),
-                ("305.7", "305", "Permanents", "If an effect sets a land's subtype to no longer be Basic, the land loses that subtype."),
-                ("614.1", None, "Replacement and Triggered Effects", "Some continuous effects modify a card's characteristics."),
-                ("614.5", "614", "Replacement and Triggered Effects", "A replacement effect sees an event before it happens."),
-            ]
+            if version:
+                con.execute("DELETE FROM rules WHERE version_id=?", (version["version_id"],))
+                con.execute(
+                    "UPDATE rules_versions SET source_url=?, source_version_date=?, "
+                    "fetched_at=?, checksum_sha256=? WHERE version_id=?",
+                    (SOURCE_URL, SOURCE_VERSION_DATE, now, checksum, version["version_id"]),
+                )
+                con.execute(
+                    "UPDATE rules_versions SET version_id=? WHERE version_id=?",
+                    (version_id, version["version_id"]),
+                )
+            else:
+                con.execute(
+                    "INSERT INTO rules_versions VALUES (?, ?, ?, ?, ?, 'active')",
+                    (version_id, SOURCE_URL, SOURCE_VERSION_DATE, now, checksum),
+                )
             con.executemany(
-                "INSERT OR IGNORE INTO rules VALUES (?, ?, ?, ?, ?, ?)",
-                [(r, p, s, t, version_id, now) for r, p, s, t in sample_rules],
+                "INSERT OR REPLACE INTO rules VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        rule.rule_id,
+                        rule.parent_rule_id,
+                        rule.section,
+                        rule.summary,
+                        version_id,
+                        now,
+                    )
+                    for rule in BUILTIN_RULES
+                ],
             )
         self.initialize_fts()
         return self.active_version() or {}
@@ -107,21 +131,38 @@ class RulesRepository:
 
     def retrieve(self, question: str, limit: int = 8) -> list[Rule]:
         version = self.ensure_sample_version()
-        number_match = re.search(r"\b(\d{3}(?:\.\d+[a-z]?)?)\b", question)
-        number = number_match.group(1) if number_match else None
+        number_match = re.search(r"\b(\d{3}(?:\.\d+[a-z]?)?)\b", question, re.IGNORECASE)
+        number = number_match.group(1).lower() if number_match else None
+        curated_ids = rule_ids_for_question(question)
         with self.connect() as con:
             rows = []
             if number:
                 normalized = number.strip(".")
-                rows.extend(con.execute(
-                    "SELECT * FROM rules WHERE version_id=? AND rule_id LIKE ? LIMIT ?",
+                rows = con.execute(
+                    "SELECT * FROM rules WHERE version_id=? AND rule_id LIKE ? "
+                    "ORDER BY rule_id LIMIT ?",
                     (version["version_id"], normalized + "%", limit),
-                ).fetchall())
+                ).fetchall()
+            if curated_ids:
+                placeholders = ",".join("?" for _ in curated_ids)
+                matched = con.execute(
+                    f"SELECT * FROM rules WHERE version_id=? AND rule_id IN ({placeholders})",
+                    [version["version_id"], *curated_ids],
+                ).fetchall()
+                by_id = {row["rule_id"]: row for row in matched}
+                rows = [by_id[rule_id] for rule_id in curated_ids if rule_id in by_id]
             if not rows:
-                terms = " OR ".join(
-                    t for t in question.replace("?", " ").replace(".", " ").split()
-                    if len(t) >= 3
-                )
+                stop_words = {
+                    "about", "after", "and", "are", "does", "during", "for", "from",
+                    "have", "help", "how", "into", "is", "it", "its", "mean", "of",
+                    "on", "that", "the", "their", "then", "this", "to", "what", "when",
+                    "with", "work", "would",
+                }
+                terms_found = []
+                for term in re.findall(r"[A-Za-z0-9]+", question.lower()):
+                    if len(term) >= 3 and term not in stop_words and term not in terms_found:
+                        terms_found.append(term)
+                terms = " OR ".join(f'"{term}"' for term in terms_found)
                 if terms:
                     try:
                         rows = con.execute(
@@ -133,11 +174,7 @@ class RulesRepository:
                         ).fetchall()
                     except sqlite3.OperationalError:
                         rows = []
-            if not rows:
-                rows = con.execute(
-                    "SELECT * FROM rules WHERE version_id=? LIMIT ?",
-                    (version["version_id"], limit),
-                ).fetchall()
+            rows = rows[:limit]
         source_url = version["source_url"]
         return [
             Rule(

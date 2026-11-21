@@ -41,3 +41,49 @@ def test_exact_rule_number_lookup():
         assert retrieved[0].rule_id == "305.7"
     finally:
         shutil.rmtree(directory, ignore_errors=True)
+
+
+def test_keyword_query_retrieves_only_relevant_rules():
+    directory = tempfile.mkdtemp()
+    try:
+        repo = RulesRepository(os.path.join(directory, "rules.db"))
+        repo.initialize()
+        retrieved = repo.retrieve("How does Deathtouch with Trample work?")
+        assert {rule.rule_id for rule in retrieved} == {
+            "702.2b", "702.2c", "702.19a", "702.19b",
+        }
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def test_unmatched_question_does_not_return_unrelated_rules():
+    directory = tempfile.mkdtemp()
+    try:
+        repo = RulesRepository(os.path.join(directory, "rules.db"))
+        repo.initialize()
+        assert repo.retrieve("What is the best deck for this format?") == []
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def test_migrates_placeholder_rules_to_curated_excerpts():
+    directory = tempfile.mkdtemp()
+    try:
+        repo = RulesRepository(os.path.join(directory, "rules.db"))
+        repo.initialize()
+        with repo.connect() as con:
+            con.execute(
+                "INSERT INTO rules_versions VALUES (?, ?, ?, ?, ?, 'active')",
+                ("cr-mvp-local", "https://example.invalid", None, "old", "placeholder"),
+            )
+            con.execute(
+                "INSERT INTO rules VALUES (?, ?, ?, ?, ?, ?)",
+                ("100.1", None, "General", "Placeholder data.", "cr-mvp-local", "old"),
+            )
+        version = repo.ensure_sample_version()
+        rules = repo.retrieve("Deathtouch and Trample")
+        assert version["version_id"] == "cr-curated-2026-11-06"
+        assert "100.1" not in {rule.rule_id for rule in repo.retrieve("rule 100.1")}
+        assert {rule.rule_id for rule in rules} >= {"702.2c", "702.19b"}
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)

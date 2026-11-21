@@ -2,6 +2,7 @@ import uuid
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import httpx
 
 from .api.schemas import (
     HealthResponse, IdentifyRequest, IdentifyResponse, JudgeRequest,
@@ -9,7 +10,7 @@ from .api.schemas import (
 )
 from .core.config import get_settings
 from .services.card_lookup import CardLookup
-from .services.judge_ai import MockLLMClient
+from .services.judge_ai import MockLLMClient, OpenAICompatibleLLMClient
 from .services.response_validator import validate_answer
 from .services.rules_repository import RulesRepository
 from .services.scryfall_client import ScryfallClient
@@ -21,7 +22,14 @@ rules = RulesRepository(settings.database_path)
 rules.initialize()
 scryfall = ScryfallClient(settings.scryfall_user_agent)
 card_lookup = CardLookup(scryfall)
-llm = MockLLMClient()
+if settings.llm_provider == "openai-compatible":
+    llm = OpenAICompatibleLLMClient(
+        api_key=settings.llm_api_key or "",
+        model=settings.llm_model,
+        base_url=settings.llm_base_url,
+    )
+else:
+    llm = MockLLMClient()
 
 app = FastAPI(title="Scry-X-AI", version="0.1.0")
 app.add_middleware(
@@ -103,10 +111,19 @@ async def judge(request: JudgeRequest):
         cards = identification["cards"]
 
     retrieved = rules.retrieve(request.question)
+    version = rules.ensure_sample_version()
     context = {
         "question": request.question,
-        "cards": cards,
+        "cards": [
+            {**card, "evidence_id": f"card-{card['oracle_id']}"}
+            for card in cards
+        ],
         "rulings": [],
+        "rules_version": {
+            "version_id": version["version_id"],
+            "source_version_date": version["source_version_date"],
+            "source_url": version["source_url"],
+        },
         "rules": [
             {
                 "evidence_id": rule.evidence_id,
@@ -118,7 +135,10 @@ async def judge(request: JudgeRequest):
             for rule in retrieved
         ],
     }
-    raw_answer = await llm.generate_judge_answer(question=request.question, context=context)
+    try:
+        raw_answer = await llm.generate_judge_answer(question=request.question, context=context)
+    except (httpx.HTTPError, KeyError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Answer provider unavailable or returned invalid output") from exc
     try:
         answer = validate_answer(raw_answer, context)
     except ValueError:
@@ -133,7 +153,6 @@ async def judge(request: JudgeRequest):
         }
         answer = validate_answer(raw_answer, context)
 
-    version = rules.ensure_sample_version()
     enriched_citations = []
     for citation in answer.citations:
         rule = next((item for item in context["rules"] if item["evidence_id"] == citation.evidence_id), None)
@@ -145,6 +164,17 @@ async def judge(request: JudgeRequest):
                 "label": f"Comprehensive Rules {rule['rule_id']}",
                 "text": rule["text"],
                 "source_url": rule["source_url"],
+            })
+            continue
+        card = next((item for item in context["cards"] if item["evidence_id"] == citation.evidence_id), None)
+        if card:
+            enriched_citations.append({
+                "evidence_id": citation.evidence_id,
+                "kind": "card_text",
+                "reason": citation.reason,
+                "label": f"Oracle text: {card['name']}",
+                "text": card["oracle_text"] or "",
+                "source_url": f"https://scryfall.com/card/{card['scryfall_id']}",
             })
 
     return {
