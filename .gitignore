@@ -1,0 +1,7 @@
+# Secrets, Keys, APIs
+.env
+!.env.example
+
+# Directories
+.github/agents/
+
