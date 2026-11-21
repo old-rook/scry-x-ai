@@ -9,8 +9,9 @@ from .api.schemas import (
     JudgeResponse, RulesVersion,
 )
 from .core.config import get_settings
+from .services.builtin_rules import answer_for_question
 from .services.card_lookup import CardLookup
-from .services.judge_ai import MockLLMClient, OpenAICompatibleLLMClient
+from .services.judge_ai import build_llm_client
 from .services.response_validator import validate_answer
 from .services.rules_repository import RulesRepository
 from .services.scryfall_client import ScryfallClient
@@ -22,14 +23,7 @@ rules = RulesRepository(settings.database_path)
 rules.initialize()
 scryfall = ScryfallClient(settings.scryfall_user_agent)
 card_lookup = CardLookup(scryfall)
-if settings.llm_provider == "openai-compatible":
-    llm = OpenAICompatibleLLMClient(
-        api_key=settings.llm_api_key or "",
-        model=settings.llm_model,
-        base_url=settings.llm_base_url,
-    )
-else:
-    llm = MockLLMClient()
+llm = build_llm_client(settings)
 
 app = FastAPI(title="Scry-X-AI", version="0.1.0")
 app.add_middleware(
@@ -135,10 +129,16 @@ async def judge(request: JudgeRequest):
             for rule in retrieved
         ],
     }
-    try:
-        raw_answer = await llm.generate_judge_answer(question=request.question, context=context)
-    except (httpx.HTTPError, KeyError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail="Answer provider unavailable or returned invalid output") from exc
+    raw_answer = (
+        answer_for_question(request.question, context["rules"])
+        if settings.prefer_builtin_answers
+        else None
+    )
+    if raw_answer is None:
+        try:
+            raw_answer = await llm.generate_judge_answer(question=request.question, context=context)
+        except (httpx.HTTPError, KeyError, ValueError) as exc:
+            raise HTTPException(status_code=502, detail="Answer provider unavailable or returned invalid output") from exc
     try:
         answer = validate_answer(raw_answer, context)
     except ValueError:

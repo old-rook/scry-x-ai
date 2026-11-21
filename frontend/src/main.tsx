@@ -1,15 +1,25 @@
-import React, { KeyboardEvent, useEffect, useState } from "react";
+import React, { KeyboardEvent, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { askJudge } from "./api";
 import type { Answer } from "./types";
 import "./styles.css";
 
+type ChatTurn = {
+  id: number;
+  question: string;
+  answer?: Answer;
+  error?: string;
+};
+
 export function App() {
   const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState<Answer | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [loadingTurnId, setLoadingTurnId] = useState<number | null>(null);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
+  const turnCounter = useRef(0);
+  const conversationEnd = useRef<HTMLDivElement>(null);
+  const loading = loadingTurnId !== null;
+  const latestAnswer = [...turns].reverse().find((turn) => turn.answer)?.answer;
   const loadingMessages = [
     "Scrying for the right rules...",
     "Resolving the stack...",
@@ -28,17 +38,37 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [loading]);
 
-  async function submitQuestion(confirmedCards: string[] = []) {
-    if (!question.trim()) return;
-    setLoading(true);
-    setError("");
+  useEffect(() => {
+    conversationEnd.current?.scrollIntoView?.({ behavior: "smooth" });
+  }, [turns, loadingTurnId]);
+
+  async function requestAnswer(turnId: number, prompt: string, confirmedCards: string[] = []) {
+    setLoadingTurnId(turnId);
+    setTurns((current) => current.map((turn) =>
+      turn.id === turnId ? { ...turn, error: undefined } : turn
+    ));
     try {
-      setAnswer(await askJudge(question, confirmedCards));
+      const answer = await askJudge(prompt, confirmedCards);
+      setTurns((current) => current.map((turn) =>
+        turn.id === turnId ? { ...turn, answer } : turn
+      ));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unexpected error");
+      const message = caught instanceof Error ? caught.message : "Unexpected error";
+      setTurns((current) => current.map((turn) =>
+        turn.id === turnId ? { ...turn, error: message } : turn
+      ));
     } finally {
-      setLoading(false);
+      setLoadingTurnId((current) => current === turnId ? null : current);
     }
+  }
+
+  function submitQuestion() {
+    const prompt = question.trim();
+    if (!prompt || loading) return;
+    const turnId = ++turnCounter.current;
+    setQuestion("");
+    setTurns((current) => [...current, { id: turnId, question: prompt }]);
+    void requestAnswer(turnId, prompt);
   }
 
   function handleQuestionKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -56,47 +86,54 @@ export function App() {
       </header>
       <section className="chat" aria-label="Rules question">
         <div className="conversation" aria-live="polite">
-          {!answer && !loading && (
+          {turns.length === 0 && (
             <aside className="empty">
               <h2>What would you like to know?</h2>
               <p>Try: “How do Deathtouch and Trample work together?”</p>
             </aside>
           )}
-          {error && <p role="alert" className="error">{error}</p>}
-          {loading && (
-            <div className="working" role="status" aria-label="Finding rules">
-              <p className="working-message" data-testid="loading-message">
-                {loadingMessages[loadingMessageIndex]}
-              </p>
-              <div className="skeleton-line" />
-              <div className="skeleton-line short" />
-              <div className="skeleton-line" />
-            </div>
-          )}
-          {answer && (
-            <article className="answer">
-              <h2>{answer.status === "answered" ? "Answer" : "More information needed"}</h2>
-              <p className="summary">{answer.summary}</p>
-              {answer.explanation.map((step, index) => <p key={index}>{step}</p>)}
-              {answer.clarifying_question && <p className="clarification">{answer.clarifying_question}</p>}
-              {answer.status === "insufficient_evidence" && <p>This evidence is incomplete.</p>}
-              {answer.status === "needs_selection" && (
-                <section aria-label="Choose a card" className="selection">
-                  {answer.ambiguous?.flatMap((match) =>
-                    match.candidates.map((card) => (
-                      <button
-                        type="button"
-                        key={card.scryfall_id}
-                        onClick={() => void submitQuestion([card.scryfall_id])}
-                      >
-                        {match.mentioned_name}: {card.name}
-                      </button>
-                    ))
-                  )}
-                </section>
+          {turns.map((turn) => (
+            <section className="chat-turn" key={turn.id}>
+              <p className="user-message">{turn.question}</p>
+              {turn.error && <p role="alert" className="error">{turn.error}</p>}
+              {loadingTurnId === turn.id && (
+                <div className="working" role="status" aria-label="Finding rules">
+                  <p className="working-message" data-testid="loading-message">
+                    {loadingMessages[loadingMessageIndex]}
+                  </p>
+                  <div className="skeleton-line" />
+                  <div className="skeleton-line short" />
+                  <div className="skeleton-line" />
+                </div>
               )}
-            </article>
-          )}
+              {turn.answer && (
+                <article className="answer">
+                  <h2>{turn.answer.status === "answered" ? "Answer" : "More information needed"}</h2>
+                  <p className="summary">{turn.answer.summary}</p>
+                  {turn.answer.explanation.map((step, index) => <p key={index}>{step}</p>)}
+                  {turn.answer.clarifying_question && <p className="clarification">{turn.answer.clarifying_question}</p>}
+                  {turn.answer.status === "insufficient_evidence" && <p>This evidence is incomplete.</p>}
+                  {turn.answer.status === "needs_selection" && (
+                    <section aria-label="Choose a card" className="selection">
+                      {turn.answer.ambiguous?.flatMap((match) =>
+                        match.candidates.map((card) => (
+                          <button
+                            type="button"
+                            key={card.scryfall_id}
+                            disabled={loading}
+                            onClick={() => void requestAnswer(turn.id, turn.question, [card.scryfall_id])}
+                          >
+                            {match.mentioned_name}: {card.name}
+                          </button>
+                        ))
+                      )}
+                    </section>
+                  )}
+                </article>
+              )}
+            </section>
+          ))}
+          <div ref={conversationEnd} />
         </div>
         <form
           className="composer"
@@ -124,7 +161,7 @@ export function App() {
       </section>
       <aside className="references" aria-label="Related sources">
         <h2>Cards</h2>
-        {answer?.cards.map((card) => (
+        {latestAnswer?.cards.map((card) => (
           <section className="card" key={card.scryfall_id}>
             {card.image_uri && <img src={card.image_uri} alt={card.name} />}
             <h3>{card.name}</h3>
@@ -133,14 +170,14 @@ export function App() {
           </section>
         ))}
         <h2>Rules and references</h2>
-        {answer?.citations.map((citation) => (
+        {latestAnswer?.citations.map((citation) => (
           <section className="citation" key={citation.evidence_id}>
             <h3>{citation.label || citation.evidence_id}</h3>
             <p>{citation.text}</p>
             {citation.source_url && <a href={citation.source_url} target="_blank" rel="noreferrer">Official source</a>}
           </section>
         ))}
-        {answer && <p>Rules version: {answer.rules_version.version_id}</p>}
+        {latestAnswer && <p>Rules version: {latestAnswer.rules_version.version_id}</p>}
       </aside>
     </main>
   );

@@ -42,7 +42,27 @@ describe("Scry-X-AI shell", () => {
     expect(askJudge).not.toHaveBeenCalled();
     fireEvent.keyDown(textarea, { key: "Enter", code: "Enter" });
     await waitFor(() => expect(askJudge).toHaveBeenCalledWith("How do Deathtouch and Trample work?", []));
+    expect(textarea).toHaveValue("");
+    expect(screen.getByText("How do Deathtouch and Trample work?")).toHaveClass("user-message");
     expect(await screen.findByText(mockAnswer.summary)).toBeInTheDocument();
+  });
+
+  it("keeps earlier turns in the conversation when asking again", async () => {
+    vi.mocked(askJudge).mockResolvedValue(mockAnswer);
+    render(<App />);
+    const textarea = screen.getByLabelText(/Ask about an MTG/);
+
+    fireEvent.change(textarea, { target: { value: "First rules question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(await screen.findAllByText(mockAnswer.summary)).toHaveLength(1);
+    expect(textarea).toHaveValue("");
+
+    fireEvent.change(textarea, { target: { value: "Second rules question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    await waitFor(() => expect(screen.getAllByText(mockAnswer.summary)).toHaveLength(2));
+    expect(screen.getByText("First rules question")).toBeInTheDocument();
+    expect(screen.getByText("Second rules question")).toBeInTheDocument();
+    expect(textarea).toHaveValue("");
   });
 
   it("submits from the Ask button and shows the themed loading skeleton", async () => {

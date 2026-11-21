@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import re
 
 
 SOURCE_URL = "https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt"
@@ -100,6 +101,57 @@ def rule_ids_for_question(question: str) -> list[str]:
 def answer_for_question(question: str, rules: list[dict]) -> dict | None:
     text = question.casefold()
     by_id = {rule["rule_id"]: rule for rule in rules}
+
+    if "trample" in text and "blocked by" in text:
+        stats = re.search(
+            r"(?P<attacker_power>\d+)\s*/\s*(?P<attacker_toughness>\d+).*?"
+            r"\btrample\b.*?\bblocked by\b.*?"
+            r"(?P<blocker_power>\d+)\s*/\s*(?P<blocker_toughness>\d+)",
+            text,
+        )
+        if stats and all(rule_id in by_id for rule_id in ("702.19a", "702.19b")):
+            attacker_power = int(stats.group("attacker_power"))
+            attacker_toughness = int(stats.group("attacker_toughness"))
+            blocker_power = int(stats.group("blocker_power"))
+            blocker_toughness = int(stats.group("blocker_toughness"))
+            deathtouch = "deathtouch" in text
+            required = ["702.19a", "702.19b"]
+            if deathtouch and "702.2c" in by_id:
+                required.insert(0, "702.2c")
+            lethal_damage = 1 if deathtouch else blocker_toughness
+            assigned_to_blocker = min(attacker_power, lethal_damage)
+            excess_damage = attacker_power - assigned_to_blocker
+            damage_summary = (
+                f"You can assign {assigned_to_blocker} damage to the {stats.group('blocker_power')}/"
+                f"{blocker_toughness} blocker"
+            )
+            if excess_damage:
+                damage_summary += f" and the remaining {excess_damage} damage to the defending player"
+            else:
+                damage_summary += "; there is no excess combat damage to trample over"
+            return {
+                "status": "answered",
+                "summary": damage_summary + ".",
+                "explanation": [
+                    f"Trample requires lethal damage to be assigned to the blocker first. "
+                    f"{assigned_to_blocker} damage is lethal here"
+                    + (" because any nonzero damage from a deathtouch source counts as lethal." if deathtouch else f" because it is a {blocker_toughness}-toughness creature with no damage already marked."),
+                    (
+                        f"That leaves {excess_damage} excess damage, which you may assign to the player "
+                        "the creature is attacking."
+                        if excess_damage
+                        else "All of the attacker's damage is needed to assign lethal damage to the blocker."
+                    ),
+                    f"The blocker assigns {blocker_power} damage to your {attacker_power}/{attacker_toughness} attacker, "
+                    f"which {'survives' if blocker_power < attacker_toughness else 'is destroyed'} absent other effects.",
+                ],
+                "assumptions": [
+                    "The creatures are assigning combat damage; the blocker has no damage marked or other relevant abilities; and no other effects modify damage assignment or prevent damage."
+                ],
+                "citations": [_rule_citation(by_id[rule_id]) for rule_id in required],
+                "uncertainties": [],
+                "clarifying_question": None,
+            }
 
     if "deathtouch" in text and "trample" in text:
         required = ("702.2c", "702.19a", "702.19b")

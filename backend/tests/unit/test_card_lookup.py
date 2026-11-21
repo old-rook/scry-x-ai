@@ -20,3 +20,10 @@ def test_extracts_other_title_case_card_names_but_not_keywords():
     names = extract_name_candidates("How does Sheoldred, the Apocalypse interact with Trample?")
     assert "Sheoldred, the Apocalypse" in names
     assert "Trample" not in names
+
+
+def test_generic_keyword_and_combat_questions_do_not_create_card_candidates():
+    assert extract_name_candidates("What is deathtouch?") == []
+    assert extract_name_candidates(
+        "WHat happens if my 2/2 with trample gets blocked by a 1/1 creature?"
+    ) == []

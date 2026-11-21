@@ -45,7 +45,9 @@ Ingestion validates a plausible rule count, computes a SHA-256 checksum, writes 
 
 ## Configuration
 
-Copy `.env.example` to `.env`. The default `LLM_PROVIDER=mock` mode provides evidence-grounded explanations for supported common mechanics from a small curated rule excerpt set. To enable broader generated answers, set `LLM_PROVIDER=openai-compatible`, `LLM_API_KEY`, and `LLM_MODEL`; `LLM_BASE_URL` defaults to the OpenAI API and can point to another OpenAI-compatible endpoint. Never put provider keys in frontend configuration.
+Copy `.env.example` to `.env`. The default `LLM_PROVIDER=mock` mode provides evidence-grounded explanations for supported common mechanics from a small curated rule excerpt set. To enable broader generated answers, set `LLM_PROVIDER=openai-compatible`, `LLM_API_KEY`, and `LLM_MODEL`; `LLM_BASE_URL` defaults to the OpenAI API and can point to another OpenAI-compatible endpoint. Set `LLM_FALLBACK_MODELS` to at least two comma-separated Gemini model IDs for the same Gemini endpoint. Optional `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, and `OPENROUTER_FALLBACK_MODELS` configure a separate OpenRouter fallback tier, tried after the Gemini fallbacks. The primary model is tried up to three times for transient failures with 1- and 2-second back-offs, then each fallback is tried once in order. `PREFER_BUILTIN_ANSWERS=true` (the default) uses curated deterministic answers for supported questions; set it to `false` to send those questions to the configured LLM so you can evaluate its responses. Never put provider keys in frontend configuration.
+
+OpenRouter's free model catalog changes frequently. At the time these settings were added, DeepSeek R1, Qwen, and Llama did not have `:free` entries in the catalog. The example uses currently listed free models with structured/JSON output support plus OpenRouter's dynamic `openrouter/free` router. Free tier availability, limits, and model routing are controlled by OpenRouter and may change.
 
 ## API
 

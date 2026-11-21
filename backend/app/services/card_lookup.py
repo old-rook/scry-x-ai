@@ -2,6 +2,25 @@ import re
 from difflib import SequenceMatcher
 from .scryfall_client import ScryfallClient
 
+RULES_TERMS = {
+    "deathtouch",
+    "defender",
+    "double strike",
+    "first strike",
+    "flying",
+    "flash",
+    "haste",
+    "hexproof",
+    "indestructible",
+    "lifelink",
+    "menace",
+    "protection",
+    "reach",
+    "trample",
+    "vigilance",
+    "ward",
+}
+
 
 def normalize_card_name(name: str) -> str:
     return re.sub(r"[^\w\s'-]", "", name.lower(), flags=re.UNICODE).strip()
@@ -41,7 +60,7 @@ def extract_name_candidates(question: str) -> list[str]:
             candidate = " ".join(words).strip()
             if not candidate or all(word.casefold() in ignored_words for word in words):
                 continue
-            if candidate.casefold() in {"deathtouch", "trample", "double strike"}:
+            if candidate.casefold() in RULES_TERMS:
                 continue
             if candidate not in candidates:
                 candidates.append(candidate)
