@@ -24,6 +24,23 @@ cd backend
 pytest
 ```
 
+### Database
+
+Set `DATABASE_URL` in the repository-root `.env` to a PostgreSQL connection URL before running migrations:
+
+```text
+DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/scry_x_ai
+```
+
+Then, from `backend/`, apply or roll back the schema with Alembic:
+
+```powershell
+alembic upgrade head
+alembic downgrade base
+```
+
+The initial migration creates only users, conversations, and messages. Repository and migration tests use in-memory SQLite until a PostgreSQL test instance is configured.
+
 ### Frontend
 
 ```powershell

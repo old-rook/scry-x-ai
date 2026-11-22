@@ -16,7 +16,7 @@ Add environment-driven PostgreSQL connectivity and repository boundaries without
 ## Affected Files
 
 - `backend/app/repositories/`
-- `backend/app/core/database.py`
+- `backend/app/db/`
 - Migration directory.
 - Database test files.
 - `.env.example`
@@ -56,3 +56,11 @@ Add environment-driven PostgreSQL connectivity and repository boundaries without
 - Migration framework.
 - Initial schema and field constraints.
 - Initial MVP entities and migrations.
+
+## Approved Implementation Decisions
+
+- Use SQLAlchemy 2, Alembic, and Psycopg 3.
+- Create the initial `users`, `conversations`, and `messages` tables.
+- Keep the initial user record limited to a UUID and creation timestamp; identity and role fields belong to the authentication story.
+- Use in-memory SQLite for unit and migration tests until a PostgreSQL test instance is available. PostgreSQL integration testing remains outstanding.
+- Do not select or add a PostgreSQL hosting provider in this story.

@@ -201,9 +201,19 @@ The PostgreSQL schema should begin with the minimum entities required by MVP:
 
 Schema changes require explicit human approval.
 
+### 6.0 Phase 1 Persistence Baseline
+
+The approved P1-S03 migration establishes only `users`, `conversations`, and `messages`. It uses SQLAlchemy 2, Alembic, and Psycopg 3. The current schema is intentionally minimal:
+
+- `users`: UUID primary key and creation timestamp. Authentication identity and role fields are deferred to P1-S04.
+- `conversations`: UUID primary key, owning user UUID, title, creation timestamp, and update timestamp.
+- `messages`: UUID primary key, conversation UUID, `user`/`assistant` role, content, and creation timestamp.
+
+Provider usage, answer-source, ruleset, and cache tables are not part of this initial migration. Until a PostgreSQL test instance is available, repository and migration tests use in-memory SQLite; PostgreSQL integration testing remains outstanding.
+
 ### 6.1 Users
 
-At minimum:
+The eventual user record may include:
 
 - `id`
 - `email` or an approved provider identity
@@ -211,7 +221,7 @@ At minimum:
 - `created_at`
 - `updated_at`
 
-Admin role checks must be enforced server-side.
+Authentication identity and role fields are not present in the P1-S03 baseline. Admin role checks must be enforced server-side when authentication is implemented.
 
 ### 6.2 Conversations
 
