@@ -3,6 +3,14 @@
     "fields": ["status", "database", "scryfall", "rules", "ai"],
     "status": ["ok", "degraded", "unavailable"]
   },
+  "AIStatus": {
+    "fields": ["status", "providers"],
+    "status": ["ok", "degraded", "unavailable", "not_configured", "stale"]
+  },
+  "AIProviderStatus": {
+    "fields": ["provider", "model", "availability"],
+    "availability": ["configured", "unavailable", "disabled"]
+  },
   "DependencyStatus": {
     "fields": ["status"],
     "status": ["ok", "degraded", "unavailable", "not_configured", "stale"]

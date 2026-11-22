@@ -200,6 +200,9 @@ def test_initial_migration_upgrades_and_downgrades_sqlite() -> None:
                 "users",
                 "conversations",
                 "messages",
+                "provider_audit",
+                "ai_paid_monthly_budgets",
+                "ai_paid_budget_reservations",
             }
             assert compare_metadata(
                 MigrationContext.configure(connection),

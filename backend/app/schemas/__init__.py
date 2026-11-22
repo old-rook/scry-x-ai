@@ -10,7 +10,7 @@ from app.schemas.conversations import (
     ConversationDetail,
     ConversationListResponse,
 )
-from app.schemas.health import DependencyStatus, HealthResponse
+from app.schemas.health import AIProviderStatus, AIStatus, DependencyStatus, HealthResponse
 
 __all__ = [
     "AnswerRequest",
@@ -25,5 +25,7 @@ __all__ = [
     "ConversationDetail",
     "ConversationListResponse",
     "DependencyStatus",
+    "AIProviderStatus",
+    "AIStatus",
     "HealthResponse",
 ]

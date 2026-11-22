@@ -46,7 +46,7 @@ def test_health_endpoint(tmp_path: Path) -> None:
         "database": {"status": "not_configured"},
         "scryfall": {"status": "ok"},
         "rules": {"status": "not_configured"},
-        "ai": {"status": "not_configured"},
+        "ai": {"status": "not_configured", "providers": []},
     }
 
 
@@ -154,6 +154,8 @@ def test_frontend_contract_fixture_matches_openapi() -> None:
     model_types = {
         "HealthResponse": app.openapi()["components"]["schemas"]["HealthResponse"],
         "DependencyStatus": app.openapi()["components"]["schemas"]["DependencyStatus"],
+        "AIStatus": app.openapi()["components"]["schemas"]["AIStatus"],
+        "AIProviderStatus": app.openapi()["components"]["schemas"]["AIProviderStatus"],
         "CardDetail": CardDetail.model_json_schema(),
         "CardSearchRequest": CardSearchRequest.model_json_schema(),
         "CardSearchResponse": CardSearchResponse.model_json_schema(),

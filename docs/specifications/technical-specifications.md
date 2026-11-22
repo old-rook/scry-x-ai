@@ -16,7 +16,7 @@ The repository is currently documentation-only: no application source tree or ex
 - **Rules store:** A locally stored, versioned, validated Comprehensive Rules dataset.
 - **Card provider:** Scryfall API.
 - **Rules source:** Official Wizards of the Coast Comprehensive Rules.
-- **AI provider integration:** Provider-independent interface with OpenRouter as the initial implementation.
+- **AI provider integration:** Provider-independent interface with HTTPX REST adapters for OpenRouter and Gemini.
 
 The frontend and backend must remain independently deployable. The frontend should support Vercel; the backend must be deployable independently of the frontend host.
 
@@ -204,7 +204,7 @@ The approved P1-S03 migration establishes only `users`, `conversations`, and `me
 - `conversations`: UUID primary key, owning user UUID, title, creation timestamp, and update timestamp.
 - `messages`: UUID primary key, conversation UUID, `user`/`assistant` role, content, and creation timestamp.
 
-Provider usage, answer-source, ruleset, and cache tables are not part of this initial migration. Until a PostgreSQL test instance is available, repository and migration tests use in-memory SQLite; PostgreSQL integration testing remains outstanding.
+The approved P1-S07 addition persists provider usage/failure classifications in `provider_audit`; it deliberately excludes prompts, responses, credentials, and raw payloads. Until a PostgreSQL test instance is available, repository and migration tests use in-memory SQLite; PostgreSQL integration testing remains outstanding.
 
 ### 6.1 Users
 
@@ -326,25 +326,26 @@ Provider implementations must not leak provider SDK types into route handlers or
 
 ### 9.2 Configuration
 
-Configuration must include:
+Configuration uses server-only environment variables and includes:
 
-- Provider name.
-- Primary model.
-- Ordered fallback models/providers.
+- Primary provider/model and optional fallback provider/model.
+- Explicit `free`/`paid` classification for every configured model.
 - Request timeout.
 - Maximum bounded retries.
 - Exponential backoff settings.
 - Paid usage enabled flag.
-- Spending limit.
+- Monthly reported-cost limit (maximum USD 5).
 - Server-side API keys.
 
 Provider API keys must remain server-side and must never be included in frontend variables or API responses.
 
-Free models are the default. `LLM_PAID_ENABLED=true` must not occur unless explicitly configured; all paid behavior must remain gated and audited.
+No provider or model identifier is selected by default; operators supply these identifiers and must verify the model's current pricing and availability. Paid models are blocked unless `LLM_PAID_ENABLED=true`, and enabling the gate requires a positive configured monthly cap no greater than USD 5. `LLM_PAID_MINIMUM_REMAINING_USD` defaults to USD 1.00, must be positive, and cannot exceed a positive configured monthly cap. Before a paid generation, the backend atomically and exclusively reserves the entire remaining budget (`effective cap - settled spend`) in a per-month database row using a conditional update/upsert supported by SQLite and PostgreSQL. The reservation is held across all paid retries/fallbacks for the generation. A valid provider-reported cost settles it and makes the newly remaining amount available to a later sequential call if it meets the minimum threshold. Missing, malformed, negative, or otherwise untrusted cost consumes/locks the remaining monthly app budget while the usable generation result is still returned. Paid provider errors with unknown possible cost also fail closed. Reservations survive process crashes and are not automatically expired or released. This prevents concurrent generations from independently reserving the same budget, but is not an absolute billing guarantee: provider cost is reported only after a request, so one individual request can overrun the remaining budget before settlement. Provider-side limits are needed for a true external spending cap. Provider credentials use `SecretStr`.
+
+The health summary contains only configured provider/model identifiers and local configuration/credential readiness (not a live upstream connectivity check). Usage/failure audit records contain provider, model, cost tier, time, outcome, error class, token counts, and provider-reported cost; prompts, responses, credentials, and raw upstream bodies are never stored in that audit. Monthly budget totals come from paid-tier reservations/settlements, not free-tier audit rows.
 
 ### 9.3 Failover
 
-Provider errors must be classified and logged:
+Provider errors must be classified and audited:
 
 - Timeout.
 - Rate limit.
@@ -354,7 +355,7 @@ Provider errors must be classified and logged:
 - Context or request too large.
 - Unknown provider error.
 
-Eligible timeout, rate-limit, and provider-availability errors may trigger bounded fallback. Authentication/configuration errors should not trigger retries against unrelated providers.
+Eligible timeout, rate-limit, and provider-availability errors may trigger bounded exponential retries and then the configured fallback. Authentication, configuration, context-too-large, invalid-request, and malformed-response errors must not fail over. The same complete neutral request (including conversation/evidence context) is passed to the fallback. If audit persistence fails, generation must fail rather than return an unaudited success or silently proceed to fallback.
 
 ## 10. Answer Pipeline
 

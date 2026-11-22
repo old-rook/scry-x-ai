@@ -1,8 +1,10 @@
 from pathlib import Path
+from decimal import Decimal
+import re
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic_settings import NoDecode
 
@@ -28,6 +30,85 @@ class Settings(BaseSettings):
     )
     api_v1_prefix: str = "/api/v1"
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
+    llm_openrouter_api_key: SecretStr | None = Field(
+        default=None, validation_alias="LLM_OPENROUTER_API_KEY"
+    )
+    llm_gemini_api_key: SecretStr | None = Field(
+        default=None, validation_alias="LLM_GEMINI_API_KEY"
+    )
+    llm_primary_provider: Literal["openrouter", "gemini"] | None = Field(
+        default=None, validation_alias="LLM_PRIMARY_PROVIDER"
+    )
+    llm_primary_model: str | None = Field(default=None, validation_alias="LLM_PRIMARY_MODEL")
+    llm_primary_model_cost: Literal["free", "paid"] | None = Field(
+        default=None, validation_alias="LLM_PRIMARY_MODEL_COST"
+    )
+    llm_fallback_provider: Literal["openrouter", "gemini"] | None = Field(
+        default=None, validation_alias="LLM_FALLBACK_PROVIDER"
+    )
+    llm_fallback_model: str | None = Field(default=None, validation_alias="LLM_FALLBACK_MODEL")
+    llm_fallback_model_cost: Literal["free", "paid"] | None = Field(
+        default=None, validation_alias="LLM_FALLBACK_MODEL_COST"
+    )
+    llm_paid_enabled: bool = Field(default=False, validation_alias="LLM_PAID_ENABLED")
+    llm_monthly_cap_usd: Decimal = Field(
+        default=Decimal("0"), validation_alias="LLM_MONTHLY_CAP_USD", ge=0, le=5
+    )
+    llm_paid_minimum_remaining_usd: Decimal = Field(
+        default=Decimal("1.00"),
+        validation_alias="LLM_PAID_MINIMUM_REMAINING_USD",
+        gt=0,
+    )
+    llm_request_timeout_seconds: float = Field(
+        default=20, validation_alias="LLM_REQUEST_TIMEOUT_SECONDS", gt=0, le=120
+    )
+    llm_max_retries: int = Field(default=2, validation_alias="LLM_MAX_RETRIES", ge=0, le=3)
+    llm_retry_base_delay_seconds: float = Field(
+        default=0.25, validation_alias="LLM_RETRY_BASE_DELAY_SECONDS", ge=0, le=2
+    )
+    llm_retry_max_delay_seconds: float = Field(
+        default=2, validation_alias="LLM_RETRY_MAX_DELAY_SECONDS", ge=0, le=8
+    )
+
+    @field_validator("llm_primary_model", "llm_fallback_model")
+    @classmethod
+    def validate_model_identifier(cls, value: str | None) -> str | None:
+        if value is not None and (not value.strip() or len(value) > 200):
+            raise ValueError("LLM model identifiers must be non-empty and at most 200 characters")
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9._:/-]+", normalized):
+            raise ValueError("LLM model identifiers contain unsupported characters")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_llm_configuration(self) -> "Settings":
+        pairs = (
+            (self.llm_primary_provider, self.llm_primary_model, self.llm_primary_model_cost),
+            (self.llm_fallback_provider, self.llm_fallback_model, self.llm_fallback_model_cost),
+        )
+        for provider, model, cost in pairs:
+            if (provider is None) != (model is None):
+                raise ValueError("Each configured LLM provider requires its model identifier")
+            if model is not None and cost is None:
+                raise ValueError("Each configured LLM model requires a free/paid cost classification")
+            if model is None and cost is not None:
+                raise ValueError("LLM cost classification requires a configured model")
+        if self.llm_fallback_model is not None and self.llm_primary_model is None:
+            raise ValueError("LLM fallback requires a configured primary model")
+        if self.llm_paid_enabled and self.llm_monthly_cap_usd <= 0:
+            raise ValueError("Paid LLM usage requires a positive monthly cap of at most USD 5")
+        if (
+            self.llm_monthly_cap_usd > 0
+            and self.llm_paid_minimum_remaining_usd > self.llm_monthly_cap_usd
+        ):
+            raise ValueError(
+                "LLM_PAID_MINIMUM_REMAINING_USD cannot exceed LLM_MONTHLY_CAP_USD"
+            )
+        if self.llm_retry_max_delay_seconds < self.llm_retry_base_delay_seconds:
+            raise ValueError("LLM retry maximum delay must be at least the base delay")
+        return self
 
     @field_validator("api_v1_prefix")
     @classmethod
