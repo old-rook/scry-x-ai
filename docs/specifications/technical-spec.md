@@ -3,8 +3,8 @@
 **Product:** Scry-X-AI  
 **Release:** MVP 1 — Rules Assistant  
 **Document status:** Draft for implementation  
-**Last updated:** 2026-11-21  
-**Companion document:** `PRD.md`
+**Last updated:** 2026-11-22
+**Companion document:** `../product/PRD.md`
 
 ## 1. Purpose
 
@@ -16,15 +16,16 @@ The implementation should prioritize a small, testable, evidence-grounded system
 
 | Layer | Proposed technology | Notes |
 |---|---|---|
-| Frontend | React + TypeScript | TypeScript is recommended for API/UI contracts |
-| Styling | Tailwind CSS | Responsive chat and reference panels |
+| Frontend | Next.js + React + TypeScript | Typed API/UI contracts and server/client boundaries |
+| Styling | Tailwind CSS + shadcn/ui | Responsive purpose-built chat and reference panels |
 | Backend | Python + FastAPI | Modular monolithic API |
 | Validation | Pydantic | Request/response schemas |
 | HTTP client | httpx | Scryfall and source retrieval |
-| Initial database | SQLite | Read-heavy rules/card cache for local MVP |
+| Durable application database | PostgreSQL | Users, conversations, provider usage, and operational metadata |
+| Packaged rules artifact | SQLite read-only artifact | Optional read-heavy rules source when not stored in PostgreSQL |
 | Rules search | SQLite FTS5 + structured lookup | Start with lexical retrieval |
 | Cache | In-process TTL cache initially | Cache external card lookups; do not treat as durable |
-| LLM | Provider-agnostic adapter | Model/provider configured through environment variables |
+| LLM | Provider-independent adapter, OpenRouter initial | Primary/fallback models configured through environment variables |
 | Tests | pytest + httpx TestClient | Unit and API/integration tests |
 | Frontend tests | Vitest + React Testing Library | Component and interaction tests |
 | Hosting | Vercel | React frontend and Python FastAPI function, subject to current runtime limits |
@@ -34,15 +35,15 @@ The implementation should prioritize a small, testable, evidence-grounded system
 Use a modular monolith: one FastAPI application with clearly separated modules. This is simpler to develop, test, and deploy than independently deployed microservices.
 
 ### Persistence decision
-SQLite is acceptable for the MVP if it is treated as a read-only or deployment-packaged rules dataset and/or a local development database. Do not assume writes to a Vercel function's local filesystem persist across invocations or deployments.
+PostgreSQL is the durable application database for MVP authentication, registered conversation history, provider usage, rules-verification metadata, and operational records.
 
-For durable user data or frequently updated shared data, use a managed database in a later iteration. For MVP rules refreshes, build and validate a new database artifact, then deploy it with the application or use an external persistent store.
+SQLite may be used for a packaged, read-only rules database or local development rules cache. It must not be treated as the durable store for application users or conversation history. Do not assume writes to a Vercel function's local filesystem persist across invocations or deployments.
 
 ## 3. High-level architecture
 
 ```mermaid
 flowchart TD
-    U[User] --> FE[React + Tailwind UI]
+    U[User] --> FE[Next.js + Tailwind + shadcn UI]
     FE --> API[FastAPI]
     API --> Q[Question Orchestrator]
     Q --> CI[Card Identification]
@@ -123,8 +124,11 @@ scry-x-ai/
 ├── .env.example
 ├── .gitignore
 ├── README.md
-├── PRD.md
-└── SPEC.md
+└── docs/
+    ├── product/
+    │   └── PRD.md
+    └── specifications/
+        └── technical-spec.md
 ```
 
 The exact package layout may be adjusted to fit Vercel's Python entry-point requirements, but service boundaries and testability should be preserved. Do not create empty abstractions without a concrete use.
@@ -137,11 +141,15 @@ Suggested variables:
 
 | Variable | Required | Description |
 |---|---|---|
-| `LLM_PROVIDER` | Yes | Provider adapter selection |
-| `LLM_API_KEY` | Yes | Server-side LLM API key |
-| `LLM_MODEL` | Yes | Model identifier |
+| `LLM_PROVIDER` | Yes | Provider adapter selection; `openrouter` is the initial provider |
+| `LLM_API_KEY` | Yes | Server-side provider API key |
+| `LLM_PRIMARY_MODEL` | Yes | Configurable primary model identifier |
+| `LLM_FALLBACK_MODELS` | No | Ordered fallback model identifiers |
+| `LLM_PAID_ENABLED` | No | Defaults to `false`; paid requests remain disabled unless explicitly enabled |
+| `LLM_SPEND_LIMIT` | Conditional | Required when paid usage is enabled |
+| `DATABASE_URL` | Yes | PostgreSQL connection string for durable application data |
+| `DATABASE_PATH` | Conditional | Packaged/local rules database path |
 | `SCRYFALL_USER_AGENT` | Yes | Descriptive application User-Agent |
-| `DATABASE_PATH` | Yes | Rules database path |
 | `RULES_SOURCE_URL` | For ingestion | Official rules source URL |
 | `FRONTEND_ORIGIN` | Yes | Allowed frontend origin for CORS |
 | `LOG_LEVEL` | No | Defaults to `INFO` |
@@ -259,6 +267,9 @@ The command should:
 
 The parser must be tested against a checked-in sanitized fixture representing the source format. Parsing should fail loudly when the upstream document structure changes.
 
+### 8.2 Freshness verification
+Verify the official rules source during backend startup and at least every 24 hours. Preserve the active dataset on failed verification or activation, record verification and update status, distinguish the latest successfully verified local ruleset from the latest known official ruleset, and disclose freshness uncertainty.
+
 ### 8.2 Retrieval
 Use a hybrid, explainable retrieval strategy for MVP:
 - Exact rule-number lookup when a rule number is mentioned or discovered.
@@ -332,6 +343,8 @@ class LLMClient:
 ```
 
 Use structured output validated by Pydantic. Do not allow the model to return arbitrary HTML.
+
+OpenRouter is the initial provider. The provider adapter must isolate provider-specific request and error handling behind a common interface, support configurable primary/fallback models, bounded retries and backoff, provider-error classification, model recording, and free-default/cost controls. Paid requests require explicit enablement and a configurable spending limit.
 
 ### System prompt requirements
 The judge assistant prompt must instruct the model to:

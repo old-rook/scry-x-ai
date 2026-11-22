@@ -3,7 +3,7 @@
 **Product:** Scry-X-AI  
 **Release:** MVP 1 — Rules Assistant  
 **Document status:** Draft for review  
-**Last updated:** 2026-11-21
+**Last updated:** 2026-11-22
 
 ## 1. Product overview
 
@@ -79,7 +79,11 @@ The evaluation set should contain at least 30–50 curated questions, including 
 - Store the rules text in a locally queryable database.
 - Record source URL, retrieved timestamp, source/version date where available, and a content checksum.
 - Preserve the rules version used to answer each question.
-- Support controlled manual refresh for the MVP. Automated scheduled updates may be deferred.
+- Check official-source freshness during startup and at least every 24 hours.
+- Support controlled, administrator-triggered manual refresh.
+- Preserve the last successfully verified rules dataset when an update or verification fails.
+- Record publication date, verification date, update status, and active dataset metadata.
+- Disclose when rules freshness cannot be confirmed.
 
 #### 5.2 Card data
 - Retrieve card details from Scryfall.
@@ -106,26 +110,40 @@ The evaluation set should contain at least 30–50 curated questions, including 
 - Do not invent rule numbers, card rulings, or source quotations.
 
 #### 5.5 User interface
-- React chat interface styled with Tailwind CSS.
+- Next.js and React chat interface built with TypeScript, Tailwind CSS, and shadcn/ui.
 - Question input and conversation display.
 - Related-card panel showing identified cards and Oracle text.
 - Rules and references panel showing retrieved rules, rulings, and source/version metadata.
 - Clear loading, error, ambiguity, and insufficient-evidence states.
 - Responsive layout suitable for desktop and mobile.
+- Support light and dark themes, with dark mode as the default.
+
+#### 5.6 Conversation history and follow-up questions
+- Guest users can retain conversation history locally in their browser.
+- Guest history must not be uploaded to an account or server automatically.
+- Registered users can persist conversation history in PostgreSQL.
+- Registered users can access their conversations across devices.
+- Follow-up questions reuse relevant recent context while keeping context bounded.
+- Users can only access their own registered conversations.
+
+#### 5.7 Administration
+- Provide a restricted administrator dashboard.
+- Display backend, database, external API, provider, fallback-model, rules-freshness, and model-usage health.
+- Support role-based access and administrator-triggered rules refresh.
+- Never expose provider keys, secrets, or private configuration values in dashboard responses or browser code.
 
 ### Out of scope for MVP 1
 - Guaranteed judge-level or tournament-authoritative rulings.
 - Full game-state simulation or comprehensive rules engine.
 - Rules coverage guarantees for every possible interaction.
 - Deck analysis, deck building, or collection management.
-- User accounts, saved conversations, and cross-device history.
 - Community voting, comments, or public answer sharing.
 - Rules quiz generation or training modes.
 - Voice input or image-based card recognition.
 - Multi-agent reasoning.
 - Fine-tuning a model on MTG rules.
 - Vector database/embedding infrastructure unless evaluation demonstrates that basic retrieval is insufficient.
-- Automatic background ingestion and zero-downtime data-version migration.
+- Zero-downtime rules-data migration.
 
 ## 6. User journeys
 
@@ -171,6 +189,15 @@ The evaluation set should contain at least 30–50 curated questions, including 
 | FR-13 | The system provides useful loading and error states. | Must |
 | FR-14 | The system caches external card data and observes API rate limits. | Should |
 | FR-15 | The system supports manual rules-data refresh with validation. | Should |
+| FR-16 | Guest conversation history remains local to the browser and is not uploaded without consent. | Must |
+| FR-17 | Registered users can persist and retrieve their own conversation history across devices. | Must |
+| FR-18 | Follow-up questions preserve relevant bounded conversation context. | Must |
+| FR-19 | The system verifies rules freshness every 24 hours and on startup when stale. | Must |
+| FR-20 | The UI supports light and dark themes, with dark mode as the default. | Must |
+| FR-21 | The administrator dashboard exposes operational health and supports authorized rules refresh. | Must |
+| FR-22 | The AI provider layer supports configurable models and bounded failover. | Must |
+| FR-23 | OpenRouter is the initial provider, with provider-independent configuration and model recording. | Must |
+| FR-24 | Free models are the default; paid usage requires explicit enablement and spending controls. | Must |
 
 ## 8. Non-functional requirements
 
@@ -191,6 +218,8 @@ Proposed targets under normal development/staging conditions:
 - External API failures must produce a recoverable error, not a fabricated answer.
 - Data ingestion must validate a new dataset before activating it.
 - Preserve the last known-good rules dataset if an update fails.
+- Preserve the last known-good rules dataset if official-source verification fails.
+- Disclose freshness verification failures and do not present stale unverified data as current.
 - Avoid logging API keys or unnecessary personal information.
 
 ### Security and privacy
@@ -198,7 +227,9 @@ Proposed targets under normal development/staging conditions:
 - Never expose the LLM provider key or Scryfall credentials (if any) to the browser.
 - Validate request sizes and input types.
 - Apply basic rate limiting to public AI endpoints before public launch.
-- Do not store question history in MVP unless explicitly required.
+- Do not upload guest history automatically.
+- Restrict registered conversation access to its owner.
+- Protect authentication routes and administrator operations with appropriate authorization.
 
 ### Accessibility and usability
 - Responsive layout.
@@ -215,7 +246,8 @@ Use the official Wizards of the Coast publication as the authoritative source fo
 Use Scryfall as the card-data provider for Oracle text, card identifiers, image references, and published card rulings. Scryfall data is a data source, not the authority for interpreting all game rules.
 
 ### Update policy
-- MVP may use a manual ingestion command or admin-only process.
+- Check official-source freshness at backend startup and at least every 24 hours.
+- Support administrator-triggered manual verification and refresh.
 - Parse and validate the new rules document before activation.
 - Store version metadata and retain enough history to identify the dataset used by previous answers.
 - If ingestion fails, continue serving the last known-good dataset.
@@ -258,18 +290,23 @@ MVP 1 is ready for a limited public release when:
 9. Secrets are not exposed to the frontend or committed to source control.
 10. Automated tests pass and the application is deployed to a test/live environment.
 11. README documentation explains setup, data sources, limitations, and deployment.
+12. Guest history remains local unless the user explicitly registers or consents to migration.
+13. Registered conversation history is protected against cross-user access.
+14. Follow-up questions use bounded relevant context.
+15. Rules freshness verification and failed-update behavior meet the 24-hour requirements.
+16. The administrator dashboard is restricted and does not expose secrets.
+17. Light and dark themes pass component and accessibility checks.
+18. Provider timeout, rate-limit, and failover behavior pass automated tests.
+19. Independent QA reports confirmed defects and test results for the implementation.
 
 ## 13. Product disclaimer
 
-MTG-Judge-AI is an unofficial fan-made rules research assistant and is not affiliated with, endorsed, or sponsored by Wizards of the Coast. Its AI-generated explanations may be incomplete or incorrect. Players should consult the official rules and a qualified judge for authoritative or tournament-sensitive decisions.
+Scry-X-AI is an unofficial fan-made rules research assistant and is not affiliated with, endorsed, or sponsored by Wizards of the Coast. Its AI-generated explanations may be incomplete or incorrect. Players should consult the official rules and a qualified judge for authoritative or tournament-sensitive decisions.
 
 ## 14. Future Roadmap
 
 After MVP validation:
 - Improved semantic retrieval and embeddings.
 - More advanced layer/timestamp explanation workflows.
-- Follow-up questions with conversation context.
 - User feedback and answer-quality reporting.
-- Automated rules-data update checks.
-- Persistent user accounts and saved questions.
 - Judge-reviewed benchmark dataset.
