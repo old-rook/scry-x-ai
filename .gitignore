@@ -50,7 +50,6 @@ tmp/
 # IDE and editor files
 .idea/
 .vscode/
-.github/agents/
 *.suo
 *.swp
 *.sublime-project
