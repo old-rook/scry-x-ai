@@ -24,16 +24,6 @@ cd backend
 pytest
 ```
 
-### Frontend
-
-```powershell
-cd frontend
-npm install
-npm run dev
-```
-
-Set the Next.js API base URL to a deployed backend URL if it differs from `/api/v1`. Keep provider credentials exclusively in backend environment variables.
-
 ## Rules ingestion
 
 ```powershell
@@ -52,7 +42,6 @@ Copy `.env.example` to `.env`. Configure the provider-independent backend with `
 - `GET /api/v1/health`
 - `GET /api/v1/rules/version`
 - `POST /api/v1/cards/identify`
-- `POST /api/v1/judge/ask`
 
 ## Limitations
 
