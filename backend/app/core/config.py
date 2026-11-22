@@ -18,7 +18,10 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     database_url: SecretStr | None = None
     jwt_signing_key: SecretStr | None = None
-    access_token_lifetime_minutes: Literal[15] = 15
+    rules_storage_dir: Path = Path(__file__).resolve().parents[2] / "data" / "rules"
+    rules_refresh_mode: Literal["local", "external"] = "local"
+    rules_refresh_interval_hours: int = Field(default=24, ge=1, le=24)
+    access_token_lifetime_minutes: int = Field(default=15, ge=15, le=15)
     app_environment: Literal["development", "test", "staging", "production"] = Field(
         default="development",
         validation_alias="APP_ENV",

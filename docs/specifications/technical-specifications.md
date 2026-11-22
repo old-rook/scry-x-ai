@@ -83,20 +83,15 @@ Possible fields:
 
 ### 4.2 Card Lookup
 
-`GET /api/v1/cards`
+`GET /api/v1/cards?q=...&limit=...`
 
-Search cards by name.
-
-Query parameters:
-
-- `q: string` — card name or search text
-- `limit: integer` — bounded result count
+Search cards through the isolated Scryfall provider adapter. `limit` defaults to 10 and is bounded from 1 to 100. Responses use the existing `CardSearchResponse`/`CardDetail` schemas.
 
 `GET /api/v1/cards/{card_id}`
 
-Returns normalized card details and card-specific rulings.
+Returns normalized card details and rulings, mapping Scryfall ruling sources (`wotc` and `scryfall`) to the contract's `gatherer` and `scryfall` values respectively. The `wotc` label identifies Wizards of the Coast's official rulings, represented as `gatherer` in the existing contract. The adapter limits search requests to one every 500 ms and all other requests to one every 100 ms. Provider calls also use bounded timeouts and retries; timeout, rate limit, network, and malformed-response errors are returned without raw upstream bodies. The Scryfall dependency status in `GET /api/v1/health` is checked using the API root endpoint.
 
-Possible normalized fields:
+Normalized card fields (defined by the existing API schema):
 
 - `id`
 - `name`
@@ -205,7 +200,7 @@ Schema changes require explicit human approval.
 
 The approved P1-S03 migration establishes only `users`, `conversations`, and `messages`. It uses SQLAlchemy 2, Alembic, and Psycopg 3. The current schema is intentionally minimal:
 
-- `users`: UUID primary key and creation timestamp. Authentication identity and role fields are deferred to P1-S04.
+- `users`: UUID primary key, creation/update timestamps, local email and password hash, and `user`/`admin` role.
 - `conversations`: UUID primary key, owning user UUID, title, creation timestamp, and update timestamp.
 - `messages`: UUID primary key, conversation UUID, `user`/`assistant` role, content, and creation timestamp.
 
@@ -268,24 +263,26 @@ No version may be activated until validation succeeds.
 
 ### 7.1 Source Verification
 
-A scheduled task must verify official rules freshness at least every 24 hours and during startup when the active verification is stale.
+The backend discovers the current TXT download link from `https://magic.wizards.com/en/rules`; dated download URLs must not be hardcoded. The TXT document is fetched and parsed using the standard library, with HTTP handled by the existing `httpx` dependency.
 
-An administrator may trigger manual verification or refresh.
+The local MVP stores immutable, versioned source and parsed/indexed files plus one atomically replaced active state manifest containing both the active version and refresh status. This avoids separate status/manifest commits. It does not modify the database schema. `RULES_REFRESH_MODE=local` runs an in-process background refresh at an interval of at most 24 hours. `RULES_REFRESH_MODE=external` disables recurring scheduling, but startup still triggers verification if no successful verification exists or it is older than 24 hours. Refresh requests run asynchronously and concurrent ingestion is guarded within the application process.
+
+An administrator may inspect `GET /api/v1/admin/rules/status` and queue a refresh with `POST /api/v1/admin/rules/refresh`. Both routes require the existing admin role. Status exposes the latest known official version separately from the active verified local version and includes classified failure codes rather than exception payloads.
 
 ### 7.2 Download and Validation
 
 The refresh pipeline must:
 
-1. Fetch the official rules source.
-2. Stream the downloaded content into a staging file or database.
-3. Validate encoding and basic document structure.
-4. Verify a plausible rule count and required section patterns.
-5. Compute a SHA-256 checksum.
-6. Parse rules into an indexed representation.
-7. Run integrity checks.
-8. Activate the staged ruleset only after success.
-9. Preserve the previous active ruleset on every failure.
-10. Record update status and failure details.
+1. Discover the current TXT URL from the official rules page.
+2. Validate UTF-8 encoding, document title and effective date.
+3. Verify a plausible numbered-rule count and required sections.
+4. Compute a SHA-256 checksum over the downloaded bytes.
+5. Parse rules into a locally persisted lexical index.
+6. Activate the staged ruleset only after all validation succeeds.
+7. Preserve the previous active manifest and data on every failure.
+8. Record source/version/publication date/checksum/status/verification times and a safe failure classification.
+
+The filesystem storage backend requires persistent storage. It is not suitable for a serverless or ephemeral Vercel runtime without replacing that backend. An external scheduler must authenticate to the admin refresh endpoint using an existing admin bearer token kept in a secret manager, and requires persistent storage shared with the backend. This MVP adds no scheduler credential, service account, or Vercel-specific infrastructure.
 
 ### 7.3 Retrieval
 
@@ -537,7 +534,8 @@ The backend deployment must support:
 - Environment-only configuration.
 - Database migrations.
 - Health checks.
-- Scheduled or startup rules freshness checks.
+- Startup rules freshness checks and either a persistent local scheduler or an external scheduler.
+- Persistent rules storage; ephemeral/serverless filesystems require a replacement storage backend.
 - Secret injection without source-control storage.
 
 The frontend deployment must not contain provider API keys or paid-model configuration.

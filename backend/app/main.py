@@ -7,19 +7,42 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.v1.auth import admin_router, router as auth_router
+from app.api.v1.cards import router as cards_router
 from app.api.v1.health import router as health_router
 from app.core.config import Settings
 from app.db.database import Database
+from app.providers.base import CardProvider
+from app.providers.errors import CardProviderError
+from app.providers.scryfall import ScryfallProvider
+from app.rules.service import RulesService
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    card_provider: CardProvider | None = None,
+    rules_service: RulesService | None = None,
+) -> FastAPI:
     settings = settings or Settings()
     database = Database(settings.database_url)
+    card_provider = card_provider if card_provider is not None else ScryfallProvider()
+    rules_service = rules_service or RulesService(settings.rules_storage_dir)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        yield
-        database.dispose()
+        await rules_service.start_background_refresh(
+            settings.rules_refresh_mode,
+            settings.rules_refresh_interval_hours,
+        )
+        try:
+            yield
+        finally:
+            try:
+                await rules_service.close()
+            finally:
+                try:
+                    await card_provider.close()
+                finally:
+                    database.dispose()
 
     app = FastAPI(
         title=settings.app_name,
@@ -38,9 +61,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def validation_error(_request: Request, _exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": "Invalid request"})
 
+    @app.exception_handler(CardProviderError)
+    async def card_provider_error(_request: Request, exc: CardProviderError) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": {"code": exc.code, "message": exc.message}},
+        )
+
     app.state.database = database
     app.state.settings = settings
+    app.state.card_provider = card_provider
+    app.state.rules_service = rules_service
     app.include_router(health_router, prefix=settings.api_v1_prefix)
+    app.include_router(cards_router, prefix=settings.api_v1_prefix)
     app.include_router(auth_router, prefix=settings.api_v1_prefix)
     app.include_router(admin_router, prefix=settings.api_v1_prefix)
     return app

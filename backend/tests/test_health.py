@@ -1,11 +1,12 @@
 import json
 from pathlib import Path
-
+import httpx
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.main import app, create_app
+from app.providers.scryfall import ScryfallProvider
 from app.schemas.answers import AnswerRequest, AnswerResponse, ComprehensiveRuleSource
 from app.schemas.auth import AuthResponse, LoginRequest, LogoutResponse, RegisterRequest
 from app.schemas.cards import CardDetail, CardSearchRequest, CardSearchResponse
@@ -14,19 +15,36 @@ from app.schemas.conversations import (
     ConversationDetail,
     ConversationListResponse,
 )
+from app.rules.service import RulesService
 
 
 client = TestClient(app)
 
 
-def test_health_endpoint() -> None:
-    response = client.get("/api/v1/health")
+def test_health_endpoint(tmp_path: Path) -> None:
+    provider = ScryfallProvider(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"object": "catalog"})
+        )
+    )
+    rules_service = RulesService(
+        tmp_path / "rules",
+        transport=httpx.MockTransport(lambda request: httpx.Response(503, request=request)),
+    )
+    with TestClient(
+        create_app(
+            Settings(database_url=None, rules_refresh_mode="external"),
+            card_provider=provider,
+            rules_service=rules_service,
+        )
+    ) as test_client:
+        response = test_client.get("/api/v1/health")
 
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
         "database": {"status": "not_configured"},
-        "scryfall": {"status": "not_configured"},
+        "scryfall": {"status": "ok"},
         "rules": {"status": "not_configured"},
         "ai": {"status": "not_configured"},
     }
@@ -122,6 +140,12 @@ def test_cors_origins_parse_comma_separated_environment(monkeypatch) -> None:
         "http://localhost:3000",
         "https://example.test",
     ]
+
+
+def test_access_token_lifetime_parses_environment(monkeypatch) -> None:
+    monkeypatch.setenv("ACCESS_TOKEN_LIFETIME_MINUTES", "15")
+
+    assert Settings().access_token_lifetime_minutes == 15
 
 
 def test_frontend_contract_fixture_matches_openapi() -> None:

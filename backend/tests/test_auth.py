@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from uuid import UUID, uuid4
 
+import httpx
 import jwt
 import pytest
 from fastapi.testclient import TestClient
@@ -10,15 +12,22 @@ from app.db.base import Base
 from app.db.models import User
 from app.main import create_app
 from app.repositories.conversations import ConversationRepository
+from app.rules.service import RulesService
 
 
 @pytest.fixture
-def auth_client():
+def auth_client(tmp_path: Path):
     settings = Settings(
         database_url="sqlite+pysqlite:///:memory:",
         jwt_signing_key="test-signing-key-not-for-production",
     )
-    app = create_app(settings)
+    rules_service = RulesService(
+        tmp_path / "rules",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(503, request=request)
+        ),
+    )
+    app = create_app(settings, rules_service=rules_service)
     assert app.state.database.engine is not None
     Base.metadata.create_all(app.state.database.engine)
     with TestClient(app) as client:

@@ -1,0 +1,13 @@
+from typing import Protocol
+
+from app.schemas.cards import CardDetail, CardSearchRequest, CardSearchResponse
+
+
+class CardProvider(Protocol):
+    async def search_cards(self, request: CardSearchRequest) -> CardSearchResponse: ...
+
+    async def get_card(self, card_id: str) -> CardDetail: ...
+
+    async def health_check(self) -> bool: ...
+
+    async def close(self) -> None: ...

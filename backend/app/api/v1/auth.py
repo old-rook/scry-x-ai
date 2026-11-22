@@ -9,6 +9,7 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.db.database import get_session
 from app.db.models import User
 from app.repositories.users import UserRepository
+from app.rules.service import RulesService
 from app.schemas.auth import AuthResponse, LoginRequest, LogoutResponse, RegisterRequest
 
 
@@ -69,3 +70,22 @@ admin_router = APIRouter(prefix="/admin", tags=["admin"])
 @admin_router.get("/status")
 def admin_status(_: Annotated[User, Depends(require_admin)]) -> dict:
     return {"status": "ok"}
+
+
+@admin_router.get("/rules/status")
+def admin_rules_status(
+    request: Request,
+    _: Annotated[User, Depends(require_admin)],
+) -> dict:
+    service: RulesService = request.app.state.rules_service
+    return service.status()
+
+
+@admin_router.post("/rules/refresh", status_code=status.HTTP_202_ACCEPTED)
+async def admin_rules_refresh(
+    request: Request,
+    _: Annotated[User, Depends(require_admin)],
+) -> dict:
+    service: RulesService = request.app.state.rules_service
+    accepted = await service.schedule_manual_refresh()
+    return {"status": "started" if accepted else "already_running"}

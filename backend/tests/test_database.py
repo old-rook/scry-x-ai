@@ -2,6 +2,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+import httpx
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
@@ -19,6 +20,14 @@ from app.main import create_app
 from app.repositories.conversations import ConversationRepository
 from app.repositories.messages import MessageRepository
 from app.repositories.users import UserRepository
+from app.rules.service import RulesService
+
+
+def offline_rules_service(path: Path) -> RulesService:
+    return RulesService(
+        path,
+        transport=httpx.MockTransport(lambda request: httpx.Response(503, request=request)),
+    )
 
 
 @pytest.fixture
@@ -56,10 +65,12 @@ def test_database_health_status_reports_connection_failure(monkeypatch) -> None:
         database.dispose()
 
 
-def test_health_endpoint_reports_database_failure_without_details(monkeypatch) -> None:
+def test_health_endpoint_reports_database_failure_without_details(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(Database, "health_status", lambda self: "unavailable")
 
-    with TestClient(create_app(Settings())) as client:
+    with TestClient(
+        create_app(Settings(rules_refresh_mode="external"), rules_service=offline_rules_service(tmp_path))
+    ) as client:
         response = client.get("/api/v1/health")
 
     assert response.status_code == 200
@@ -68,10 +79,12 @@ def test_health_endpoint_reports_database_failure_without_details(monkeypatch) -
     assert "password" not in response.text.lower()
 
 
-def test_health_endpoint_reports_configured_database() -> None:
+def test_health_endpoint_reports_configured_database(tmp_path: Path) -> None:
     settings = Settings(database_url="sqlite+pysqlite:///:memory:")
 
-    with TestClient(create_app(settings)) as client:
+    with TestClient(
+        create_app(settings, rules_service=offline_rules_service(tmp_path))
+    ) as client:
         response = client.get("/api/v1/health")
 
     assert response.status_code == 200
