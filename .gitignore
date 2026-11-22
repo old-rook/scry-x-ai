@@ -25,6 +25,7 @@ dist/
 
 # Node.js
 node_modules/
+.next/
 frontend/dist/
 .vite/
 coverage/
@@ -47,6 +48,10 @@ yarn-error.log*
 .cache/
 tmp/
 
+# Environment and local runtime
+.env
+.env.*
+!.env.example
 # IDE and editor files
 .idea/
 .vscode/

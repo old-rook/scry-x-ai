@@ -1,6 +1,6 @@
 # Scry-X-AI
 
-Scry-X-AI is an unofficial MVP rules research assistant. It combines Scryfall card lookup, a versioned SQLite Comprehensive Rules dataset, lexical retrieval, and a structured, citation-validating answer pipeline.
+Scry-X-AI is an unofficial MVP rules research assistant. It uses a Next.js frontend and a Python FastAPI backend, with planned Scryfall lookup and versioned Comprehensive Rules retrieval.
 
 This project is not affiliated with Wizards of the Coast and does not provide official tournament rulings.
 
@@ -24,25 +24,26 @@ cd backend
 pytest
 ```
 
-## Rules ingestion
+### Frontend
 
 ```powershell
-cd backend
-python -m app.scripts.ingest_rules --source "https://official.example/comprehensive-rules.txt" --database data/rules.db
+cd frontend
+npm install
+npm run dev
 ```
 
-Ingestion validates a plausible rule count, computes a SHA-256 checksum, writes a staged database, and activates it only after the integrity checks complete. A failed update preserves the prior active database.
+The frontend is available at `http://localhost:3000`.
 
 ## Configuration
 
-Copy `.env.example` to `.env`. Configure the provider-independent backend with `LLM_PROVIDER=openrouter`, a server-side provider API key, a primary model, and optional ordered fallback models. Free models are the default. Paid provider usage must remain disabled unless `LLM_PAID_ENABLED=true` is set explicitly and a spending limit is configured. Never put provider keys or paid-usage configuration in frontend environment variables.
+Copy `.env.example` to `.env`. The foundation backend reads `APP_NAME`, `APP_ENV`, `API_V1_PREFIX`, and `CORS_ORIGINS`. The frontend reads `NEXT_PUBLIC_API_BASE_URL`.
+
+Provider credentials and paid-usage configuration are future server-only settings and must never be placed in frontend environment variables.
 
 ## API
 
 - `GET /api/v1/health`
-- `GET /api/v1/rules/version`
-- `POST /api/v1/cards/identify`
 
 ## Limitations
 
-The MVP uses local lexical retrieval rather than a formal rules engine or semantic embeddings. Without an LLM provider, the backend answers supported interactions from curated rules summaries and reports insufficient evidence for unsupported topics rather than returning unrelated rules. Run the rules ingestion command to search the full Comprehensive Rules dataset. Generated explanations must be verified against the displayed card text and official rules. Card lookup also requires network access unless cached provider data is added.
+The MVP foundation does not yet implement rules ingestion, card lookup, or AI answer generation. Generated explanations and integration behavior from later stories must remain source-grounded and verified against displayed card text and official rules.
