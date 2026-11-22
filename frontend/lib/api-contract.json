@@ -34,5 +34,9 @@
   },
   "ConversationListResponse": {
     "fields": ["conversations", "total"]
-  }
+  },
+  "RegisterRequest": {"fields": ["email", "password"]},
+  "LoginRequest": {"fields": ["email", "password"]},
+  "AuthResponse": {"fields": ["access_token", "token_type", "user_id", "email", "role"]},
+  "LogoutResponse": {"fields": ["status"]}
 }
