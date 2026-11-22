@@ -63,8 +63,8 @@ def usage_values(
 
     input_count = usage.get("prompt_tokens", usage.get("promptTokenCount"))
     output_count = usage.get("completion_tokens", usage.get("candidatesTokenCount"))
-    input_tokens = input_count if isinstance(input_count, int) and input_count >= 0 else None
-    output_tokens = output_count if isinstance(output_count, int) and output_count >= 0 else None
+    input_tokens = input_count if type(input_count) is int and input_count >= 0 else None
+    output_tokens = output_count if type(output_count) is int and output_count >= 0 else None
     cost: Decimal | None = None
     if openrouter and usage.get("cost") is not None:
         try:

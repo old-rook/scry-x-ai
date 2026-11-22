@@ -1,3 +1,5 @@
+import { ApiError, submitAnswerRequest } from "./answer-api.mjs";
+
 export interface HealthResponse {
   status: "ok" | "degraded" | "unavailable";
   database: DependencyStatus;
@@ -52,6 +54,7 @@ export interface CardRuling {
 export interface CardDetail {
   id: string;
   name: string;
+  scryfall_uri?: string | null;
   mana_cost?: string | null;
   type_line?: string | null;
   oracle_text?: string | null;
@@ -78,6 +81,7 @@ export interface AnswerSource {
   source_type: "comprehensive_rules" | "card_ruling" | "oracle_text";
   source_reference: string;
   source_url?: string | null;
+  evidence_text: string;
   retrieved_at: string;
 }
 
@@ -90,11 +94,17 @@ export interface ComprehensiveRuleSource {
   ruleset_version: string;
 }
 
+export interface ConversationTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface AnswerRequest {
   conversation_id?: string | null;
   question: string;
   card_names?: string[];
   guest?: boolean;
+  conversation_context?: ConversationTurn[];
 }
 
 export interface AnswerResponse {
@@ -126,14 +136,13 @@ export interface ConversationListResponse {
   total: number;
 }
 
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = "ApiError";
-  }
+export { ApiError } from "./answer-api.mjs";
+
+export async function submitAnswer(
+  request: AnswerRequest,
+  baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1",
+): Promise<AnswerResponse> {
+  return (await submitAnswerRequest(request, baseUrl)) as AnswerResponse;
 }
 
 export async function getHealth(

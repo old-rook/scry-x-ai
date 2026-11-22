@@ -18,6 +18,7 @@ class CardRuling(StrictBaseModel):
 class CardDetail(StrictBaseModel):
     id: str = Field(min_length=1)
     name: str = Field(min_length=1)
+    scryfall_uri: HttpUrl | None = None
     mana_cost: str | None = None
     type_line: str | None = None
     oracle_text: str | None = None

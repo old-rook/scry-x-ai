@@ -4,7 +4,7 @@
 
 This specification defines the proposed implementation architecture and contracts for Scry-X-AI. It is based on the project instructions and the current repository state.
 
-The repository is currently documentation-only: no application source tree or executable implementation is present. This document therefore defines a target MVP design, not documentation of an existing stack.
+The repository now includes a FastAPI/Next.js MVP foundation and the P2-S02 answer API. This document distinguishes implemented behavior from later proposed capabilities.
 
 ## 2. System Architecture
 
@@ -16,7 +16,7 @@ The repository is currently documentation-only: no application source tree or ex
 - **Rules store:** A locally stored, versioned, validated Comprehensive Rules dataset.
 - **Card provider:** Scryfall API.
 - **Rules source:** Official Wizards of the Coast Comprehensive Rules.
-- **AI provider integration:** Provider-independent interface with HTTPX REST adapters for OpenRouter and Gemini.
+- **AI provider integration:** Provider-independent interface with HTTPX REST adapters for OpenRouter, Gemini, and direct OpenAI Chat Completions.
 
 The frontend and backend must remain independently deployable. The frontend should support Vercel; the backend must be deployable independently of the frontend host.
 
@@ -118,9 +118,15 @@ Request:
   "conversation_id": "optional UUID",
   "question": "What happens when...",
   "card_names": ["Optional normalized card names"],
-  "guest": true
+  "guest": true,
+  "conversation_context": [
+    {"role": "user", "content": "Recent guest question"},
+    {"role": "assistant", "content": "Recent answer"}
+  ]
 }
 ```
+
+`conversation_context` is optional and is limited to the last six user/assistant turns, 1,200 characters per turn, and 3,600 characters total. `guest=false` is rejected; registered answer/conversation support is not implied. The legacy `card_names` field is accepted for compatibility; POC card extraction is automatic and deterministic. `conversation_id` is returned as supplied but is not used as a server-side conversation key.
 
 Response:
 
@@ -139,7 +145,9 @@ Response:
 }
 ```
 
-Response arrays must contain structured source objects, not free-text citation names only.
+The current guest-only endpoint does not persist, log, or sync questions or context. The response has a server-generated answer ID, structured verdict/explanation, cited rules and card evidence, considerations, selected provider model, evidence status, and disclaimer. `model` is `not_used` if no generation took place. Evidence status is computed by the server, not accepted from generated JSON. The `comprehensive_rules` metadata includes the fresh active ruleset's version, source checksum, and official source URL, and only returned cited rules. Card citations must be exact Scryfall evidence retrieved for the request.
+
+The endpoint's bounded retriever uses explicit rule references and keyword overlap, plus exact Scryfall card-name matches extracted deterministically from the question. Extraction supports quoted names, title-like multiword phrases, and a bounded set of single-word candidates following question/action cues; exact normalized Scryfall name matching remains required. It retrieves at most eight rules and three card candidates, and bounds evidence and generation output. Rules are eligible only through `read_verified_rules()` freshness and supersession checks. No usable evidence skips generation. Generated output must be strict JSON with exact keys and bounded fields; invalid JSON, unsupported citations, or no usable citations yield a non-model-generated insufficient response with no citations and no second generation attempt. Citation IDs are mechanically validated against retrieved evidence, but semantic support/relevance of the generated explanation is not mechanically guaranteed. This is a retrieval POC, not semantic search or an official ruling service.
 
 ### 4.4 Conversations
 
@@ -150,7 +158,7 @@ Authenticated APIs should support:
 - `GET /api/v1/conversations/{conversation_id}`
 - `DELETE /api/v1/conversations/{conversation_id}`
 
-Guest conversations must be stored only in browser storage unless the user explicitly consents to synchronization.
+Guest conversations must be stored only in browser storage. The UI provides an explicit clear-history action and expires/prunes conversations after 30 days based on the last update. Browser storage read, write, and clear failures are surfaced to the user. The answer API accepts bounded browser-supplied recent turns for follow-ups, but does not store or synchronize them. Registered answer/conversation synchronization is outside this POC.
 
 ## 5. Citation Data Contracts
 
@@ -181,6 +189,10 @@ Guest conversations must be stored only in browser storage unless the user expli
 ```
 
 The answer pipeline must reject citations not present in the retrieved evidence set.
+
+### 5.3 Retrieved Card Evidence
+
+Each cited Oracle-text or card-ruling `AnswerSource` includes bounded `evidence_text` containing the exact retrieved Oracle text or ruling comment. It also includes Scryfall's canonical `scryfall_uri` as `source_url` when provided by the provider. These source excerpts are displayed separately from the AI interpretation.
 
 ## 6. Data Model
 
@@ -324,7 +336,7 @@ The provider interface should expose operations for answer generation and provid
 - `generate_answer(request, evidence, conversation_context)`
 - `health()`
 
-Provider implementations must not leak provider SDK types into route handlers or application services.
+Provider implementations must not leak provider SDK types into route handlers or application services. The answer application service orchestrates retrieval, prompt assembly, citation validation, and response construction; route handlers only map safe errors.
 
 ### 9.2 Configuration
 
@@ -336,14 +348,16 @@ Configuration uses server-only environment variables and includes:
 - Maximum bounded retries.
 - Exponential backoff settings.
 - Paid usage enabled flag.
-- Monthly reported-cost limit (maximum USD 5).
+- Monthly app-tracked paid-usage limit (maximum USD 20).
 - Server-side API keys.
 
 Provider API keys must remain server-side and must never be included in frontend variables or API responses.
 
-No provider or model identifier is selected by default; operators supply these identifiers and must verify the model's current pricing and availability. Paid models are blocked unless `LLM_PAID_ENABLED=true`, and enabling the gate requires a positive configured monthly cap no greater than USD 5. `LLM_PAID_MINIMUM_REMAINING_USD` defaults to USD 1.00, must be positive, and cannot exceed a positive configured monthly cap. Before a paid generation, the backend atomically and exclusively reserves the entire remaining budget (`effective cap - settled spend`) in a per-month database row using a conditional update/upsert supported by SQLite and PostgreSQL. The reservation is held across all paid retries/fallbacks for the generation. A valid provider-reported cost settles it and makes the newly remaining amount available to a later sequential call if it meets the minimum threshold. Missing, malformed, negative, or otherwise untrusted cost consumes/locks the remaining monthly app budget while the usable generation result is still returned. Paid provider errors with unknown possible cost also fail closed. Reservations survive process crashes and are not automatically expired or released. This prevents concurrent generations from independently reserving the same budget, but is not an absolute billing guarantee: provider cost is reported only after a request, so one individual request can overrun the remaining budget before settlement. Provider-side limits are needed for a true external spending cap. Provider credentials use `SecretStr`.
+No provider or model identifier is selected by default; operators supply these identifiers and must verify the model's current pricing and availability. Paid models are blocked unless `LLM_PAID_ENABLED=true`, and enabling the gate requires a positive configured monthly cap no greater than USD 20. `LLM_PAID_MINIMUM_REMAINING_USD` defaults to USD 1.00, must be positive, and cannot exceed a positive configured monthly cap. Before a paid generation, the backend atomically and exclusively reserves the entire remaining budget (`effective cap - settled spend`) in a per-month database row using a conditional update/upsert supported by SQLite and PostgreSQL. The reservation is held across all paid retries/fallbacks for the generation. Valid provider-reported costs and provider-specific token-price estimates settle it and make the newly remaining amount available to a later sequential call if it meets the minimum threshold. OpenAI chat usage has token counts but no response cost, so its estimate uses the explicitly configured pricing model and per-million-token rates; the pricing model must match the configured OpenAI model. Missing, malformed, negative, or otherwise untrusted cost consumes/locks the remaining monthly app budget while the usable generation result is still returned. Paid provider errors with unknown possible cost also fail closed; local configuration errors that happen before a provider request settle at zero and release the reservation. Reservations survive process crashes and are not automatically expired or released. This prevents concurrent generations from independently reserving the same budget, but is not an absolute billing guarantee: cost is determined only after a request, so one individual request can overrun the remaining budget before settlement. Provider-side limits are needed for a true external spending cap. Provider credentials use `SecretStr`.
 
-The health summary contains only configured provider/model identifiers and local configuration/credential readiness (not a live upstream connectivity check). Usage/failure audit records contain provider, model, cost tier, time, outcome, error class, token counts, and provider-reported cost; prompts, responses, credentials, and raw upstream bodies are never stored in that audit. Monthly budget totals come from paid-tier reservations/settlements, not free-tier audit rows.
+The health summary contains only configured provider/model identifiers and local configuration/credential readiness (not a live upstream connectivity check). Usage/failure audit records contain provider, model, cost tier, time, outcome, error class, token counts, and provider-reported or token-price-estimated cost; prompts, responses, credentials, and raw upstream bodies are never stored in that audit. Monthly budget totals come from paid-tier reservations/settlements, not free-tier audit rows.
+
+The current local answer configuration selects direct OpenAI `gpt-4o-mini`, classified `paid`; embeddings are not used. Its pricing model and standard, cached-input, and output rates are configured with `LLM_OPENAI_PRICING_MODEL` and `LLM_OPENAI_*_PRICE_PER_MILLION_USD` settings, which must be reviewed against current OpenAI pricing whenever the model or provider pricing changes. The API key remains server-side and must be supplied privately. Tests use fake AI/card providers and do not make live provider calls.
 
 ### 9.3 Failover
 
@@ -359,24 +373,23 @@ Provider errors must be classified and audited:
 
 Eligible timeout, rate-limit, and provider-availability errors may trigger bounded exponential retries and then the configured fallback. Authentication, configuration, context-too-large, invalid-request, and malformed-response errors must not fail over. The same complete neutral request (including conversation/evidence context) is passed to the fallback. If audit persistence fails, generation must fail rather than return an unaudited success or silently proceed to fallback.
 
+Malformed/unsupported *answer JSON* is handled after provider generation: it returns a fixed insufficient-evidence response and must not trigger a second generation call. Transport/provider retry behavior remains governed by the existing AI generation service configuration.
+
 ## 10. Answer Pipeline
 
-The answer pipeline must:
+The answer POC pipeline:
 
 1. Validate and normalize the question.
 2. Identify explicit card names and relevant state details.
-3. Request clarification for materially missing information.
-4. Retrieve relevant Oracle text and card rulings.
-5. Retrieve relevant Comprehensive Rules sections.
-6. Package the evidence and conversation context.
-7. Generate a structured answer.
-8. Parse the provider response.
-9. Validate citation references against the retrieved evidence.
-10. Reject unsupported citations or evidence claims.
-11. Persist the answer and source references when authorized.
-12. Record model and usage information.
+3. Extract a bounded set of candidate card names deterministically.
+4. Retrieve exact-name Scryfall card text and available rulings.
+5. Retrieve bounded, explicit-reference/keyword Comprehensive Rules sections from a fresh verified ruleset.
+6. Package untrusted question, evidence, and bounded prior guest turns under explicit system instructions.
+7. Generate a strict JSON answer and validate its shape and all rule/card references.
+8. Return a fixed insufficient-evidence response for absent evidence or invalid/hallucinated references.
+9. Record provider usage metadata through the existing AI audit service, without prompt/answer contents.
 
-The provider is not allowed to introduce source references that are absent from the retrieved evidence set.
+The provider is not allowed to introduce source references that are absent from the retrieved evidence set. Guest question/context/answer data are not persisted by this endpoint. AI config/provider/audit and card provider errors are mapped to safe status codes and messages; raw bodies and credentials must never be exposed.
 
 If evidence is partial or missing, the result must qualify the answer or return insufficient evidence rather than supplying unrelated rules.
 
@@ -393,7 +406,7 @@ Admin endpoints must require an admin role and must not return:
 - Raw provider configuration secrets.
 - Private environment values.
 
-Guest content must not be sent to the backend for persistence unless synchronization is explicitly initiated and authorized.
+Guest content must not be sent to the backend for persistence unless synchronization is explicitly initiated and authorized. P2-S02 sends bounded question/context to the backend for one-time answer generation only, and does not persist or log it. The endpoint currently accepts guests only.
 
 ## 12. Frontend Architecture
 

@@ -150,7 +150,7 @@ class ProviderAudit(Base):
 class AIPaidMonthlyBudget(Base):
     __tablename__ = "ai_paid_monthly_budgets"
     __table_args__ = (
-        CheckConstraint("cap_usd > 0 AND cap_usd <= 5", name="ck_ai_paid_budget_cap"),
+        CheckConstraint("cap_usd > 0 AND cap_usd <= 20", name="ck_ai_paid_budget_cap"),
         CheckConstraint("spent_usd >= 0", name="ck_ai_paid_budget_spent"),
         CheckConstraint("reserved_usd >= 0", name="ck_ai_paid_budget_reserved"),
     )

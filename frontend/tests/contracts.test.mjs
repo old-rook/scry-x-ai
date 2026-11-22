@@ -1,6 +1,46 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { ApiError, submitAnswerRequest } from "../lib/answer-api.mjs";
+import {
+  GUEST_HISTORY_KEY,
+  GUEST_HISTORY_TTL_MS,
+  MAX_GUEST_CONVERSATIONS,
+  MAX_GUEST_MESSAGES,
+  createGuestConversation,
+  clearGuestHistory,
+  guestConversationContext,
+  readGuestHistory,
+  recordGuestAnswer,
+  writeGuestHistory,
+} from "../lib/guest-history.mjs";
+
+const sampleAnswer = {
+  answer_id: "answer-1",
+  conversation_id: "guest-1",
+  verdict: "depends",
+  explanation: "The linked rule governs this interaction.",
+  comprehensive_rules: [{
+    section: "601.2f",
+    title: "Targets",
+    text: "Targets are chosen as the spell is cast.",
+    source_url: "https://example.test/rules",
+    checksum: "a".repeat(64),
+    ruleset_version: "20261106",
+  }],
+  card_rulings: [{
+    id: "source-1",
+    source_type: "oracle_text",
+    source_reference: "Lightning Bolt — Oracle text",
+    source_url: "https://example.test/card",
+    evidence_text: "Lightning Bolt deals 3 damage to any target.",
+    retrieved_at: "2026-11-22T00:00:00Z",
+  }],
+  additional_considerations: [],
+  model: "test-model",
+  evidence_status: "partial",
+  disclaimer: "Unofficial research only.",
+};
 
 test("frontend API contract exposes the Phase 1 schemas", async () => {
   const source = await readFile(new URL("../lib/api.ts", import.meta.url), "utf8");
@@ -9,11 +49,13 @@ test("frontend API contract exposes the Phase 1 schemas", async () => {
     "HealthResponse",
     "DependencyStatus",
     "CardDetail",
+    "AnswerSource",
     "CardSearchRequest",
     "CardSearchResponse",
     "AnswerRequest",
     "AnswerResponse",
     "ComprehensiveRuleSource",
+    "ConversationTurn",
     "ConversationCreateRequest",
     "ConversationDetail",
     "ConversationListResponse",
@@ -33,6 +75,7 @@ test("frontend API contract exposes required Phase 1 fields", async () => {
     "evidence_status:",
     "comprehensive_rules:",
     "card_rulings:",
+    "evidence_text:",
     "title:",
     "created_at:",
     "updated_at:",
@@ -74,4 +117,161 @@ test("frontend contract fixture stays aligned with frontend API source", async (
       );
     }
   }
+});
+
+test("answer API sends the guest request to /answers and returns its response", async () => {
+  const request = {
+    question: "Can Lightning Bolt target this creature?",
+    guest: true,
+    conversation_id: "guest-1",
+    conversation_context: [{ role: "user", content: "Earlier question" }],
+  };
+  let captured;
+  const result = await submitAnswerRequest(request, "http://localhost:8000/api/v1", async (url, options) => {
+    captured = { url, options };
+    return { ok: true, json: async () => sampleAnswer };
+  });
+
+  assert.equal(captured.url, "http://localhost:8000/api/v1/answers");
+  assert.equal(captured.options.method, "POST");
+  assert.equal(captured.options.headers["Content-Type"], "application/json");
+  assert.deepEqual(JSON.parse(captured.options.body), request);
+  assert.equal(result.verdict, "depends");
+  assert.equal(result.comprehensive_rules[0].ruleset_version, "20261106");
+});
+
+test("answer API maps backend failures to safe messages, never raw response bodies", async () => {
+  await assert.rejects(
+    submitAnswerRequest({ question: "Question", guest: true }, "http://api", async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        detail: { code: "ai_unavailable", message: "secret provider detail" },
+      }),
+    })),
+    (error) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.status, 503);
+      assert.match(error.message, /not configured or is currently unavailable/);
+      assert.doesNotMatch(error.message, /secret provider detail/);
+      return true;
+    },
+  );
+  await assert.rejects(
+    submitAnswerRequest({}, "http://api", async () => { throw new Error("network internals"); }),
+    (error) => error instanceof ApiError && error.status === 0 && !error.message.includes("internals"),
+  );
+});
+
+test("answer API rejects malformed and structurally invalid successful responses", async () => {
+  for (const json of [
+    async () => { throw new SyntaxError("bad json"); },
+    async () => ({ ...sampleAnswer, card_rulings: [{ ...sampleAnswer.card_rulings[0], evidence_text: "" }] }),
+    async () => ({ ...sampleAnswer, comprehensive_rules: "not-an-array" }),
+  ]) {
+    await assert.rejects(
+      submitAnswerRequest({}, "http://api", async () => ({ ok: true, status: 200, json })),
+      (error) => error instanceof ApiError &&
+        error.status === 200 &&
+        error.message === "The backend returned an unreadable answer.",
+    );
+  }
+});
+
+test("guest history is versioned, bounded, expires after 30 days, and survives storage round trip", () => {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+  let history = {
+    version: 1,
+    currentId: "guest-1",
+    conversations: [createGuestConversation("guest-1", "2026-11-22T00:00:00Z")],
+  };
+  for (let index = 0; index < MAX_GUEST_CONVERSATIONS + 2; index += 1) {
+    history = recordGuestAnswer(
+      history,
+      `guest-${index}`,
+      `Question ${index}`,
+      { ...sampleAnswer, answer_id: `answer-${index}` },
+      `2026-11-22T00:00:0${index}Z`,
+      (() => { let message = 0; return () => `message-${index}-${message++}`; })(),
+    );
+  }
+  assert.equal(history.conversations.length, MAX_GUEST_CONVERSATIONS);
+  assert.ok(history.conversations.every((chat) => chat.messages.length <= MAX_GUEST_MESSAGES));
+  assert.equal(writeGuestHistory(storage, history), true);
+  assert.equal(values.has(GUEST_HISTORY_KEY), true);
+  assert.deepEqual(readGuestHistory(storage, new Date("2026-11-23T00:00:00Z")), history);
+
+  values.set(GUEST_HISTORY_KEY, JSON.stringify({ version: 99, conversations: [] }));
+  assert.deepEqual(readGuestHistory(storage), {
+    version: 1,
+    currentId: null,
+    conversations: [],
+  });
+  assert.throws(() => readGuestHistory(null), /storage is unavailable/);
+  assert.throws(() => writeGuestHistory(null, history), /storage is unavailable/);
+
+  const now = new Date("2026-11-23T00:00:00Z");
+  const expiryValues = new Map([[GUEST_HISTORY_KEY, JSON.stringify({
+    version: 1,
+    currentId: "old",
+    conversations: [
+      createGuestConversation("old", new Date(now.getTime() - GUEST_HISTORY_TTL_MS - 1).toISOString()),
+      createGuestConversation("recent", new Date(now.getTime() - GUEST_HISTORY_TTL_MS + 1).toISOString()),
+    ],
+  })]]);
+  const expiryStorage = {
+    getItem: (key) => expiryValues.get(key) ?? null,
+    setItem: (key, value) => expiryValues.set(key, value),
+    removeItem: (key) => expiryValues.delete(key),
+  };
+  const pruned = readGuestHistory(expiryStorage, now);
+  assert.deepEqual(pruned.conversations.map((chat) => chat.id), ["recent"]);
+  assert.equal(pruned.currentId, "recent");
+  assert.deepEqual(JSON.parse(expiryValues.get(GUEST_HISTORY_KEY)).conversations.map((chat) => chat.id), ["recent"]);
+
+  clearGuestHistory(expiryStorage);
+  assert.equal(expiryValues.has(GUEST_HISTORY_KEY), false);
+});
+
+test("guest history surfaces browser storage read, write, and clear failures", () => {
+  const brokenStorage = {
+    getItem() { throw new Error("private browser detail"); },
+    setItem() { throw new Error("private browser detail"); },
+    removeItem() { throw new Error("private browser detail"); },
+  };
+  assert.throws(() => readGuestHistory(brokenStorage), /storage is unavailable/);
+  assert.throws(
+    () => writeGuestHistory(brokenStorage, { version: 1, currentId: null, conversations: [] }),
+    /storage is unavailable/,
+  );
+  assert.throws(() => clearGuestHistory(brokenStorage), /storage is unavailable/);
+});
+
+test("guest context contains only bounded recent prior turns", () => {
+  let history = {
+    version: 1,
+    currentId: "guest-context",
+    conversations: [createGuestConversation("guest-context")],
+  };
+  for (let index = 0; index < 5; index += 1) {
+    history = recordGuestAnswer(
+      history,
+      "guest-context",
+      `Question ${index}`,
+      { ...sampleAnswer, answer_id: `context-${index}`, explanation: `Answer ${index}` },
+      new Date(2026, 0, index + 1).toISOString(),
+      (() => { let message = 0; return () => `context-message-${index}-${message++}`; })(),
+    );
+  }
+  const turns = guestConversationContext(history.conversations[0]);
+  assert.equal(turns.length, 6);
+  assert.deepEqual(turns.map((turn) => turn.role), ["user", "assistant", "user", "assistant", "user", "assistant"]);
+  assert.match(turns[0].content, /Question 2/);
+  assert.ok(turns.every((turn) => turn.content.length <= 1200));
+  assert.ok(turns.reduce((sum, turn) => sum + turn.content.length, 0) <= 3600);
 });

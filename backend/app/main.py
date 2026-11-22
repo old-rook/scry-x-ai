@@ -7,6 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.v1.auth import admin_router, router as auth_router
+from app.api.v1.answers import router as answers_router
 from app.api.v1.cards import router as cards_router
 from app.api.v1.health import router as health_router
 from app.core.config import Settings
@@ -81,6 +82,7 @@ def create_app(
     app.state.ai_generation_service = ai_generation_service
     app.include_router(health_router, prefix=settings.api_v1_prefix)
     app.include_router(cards_router, prefix=settings.api_v1_prefix)
+    app.include_router(answers_router, prefix=settings.api_v1_prefix)
     app.include_router(auth_router, prefix=settings.api_v1_prefix)
     app.include_router(admin_router, prefix=settings.api_v1_prefix)
     return app

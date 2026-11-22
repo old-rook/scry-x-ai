@@ -19,6 +19,7 @@ CARD = {
     "id": "card-123",
     "oracle_id": "oracle-123",
     "name": "Lightning Bolt",
+    "scryfall_uri": "https://scryfall.com/card/lea/161/lightning-bolt",
     "mana_cost": "{R}",
     "type_line": "Instant",
     "oracle_text": "Lightning Bolt deals 3 damage to any target.",
@@ -80,6 +81,7 @@ def test_search_normalizes_cards_and_honors_limit() -> None:
     assert data["cards"][0]["mana_cost"] == "{R}"
     assert data["cards"][0]["image_urls"]["normal"] == CARD["image_uris"]["normal"]
     assert data["cards"][0]["source"] == "scryfall"
+    assert data["cards"][0]["scryfall_uri"] == CARD["scryfall_uri"]
     assert data["cards"][0]["source_updated_at"] == "2026-01-02T03:04:05Z"
 
 

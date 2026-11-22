@@ -199,6 +199,7 @@ class ScryfallProvider:
         return CardDetail(
             id=data.get("id"),
             name=cls._card_field(data, card_faces, "name", " // "),
+            scryfall_uri=data.get("scryfall_uri"),
             mana_cost=cls._card_field(data, card_faces, "mana_cost", " // "),
             type_line=cls._card_field(data, card_faces, "type_line", " // "),
             oracle_text=cls._card_field(

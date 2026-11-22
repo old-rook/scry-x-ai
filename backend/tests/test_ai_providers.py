@@ -32,11 +32,16 @@ from app.providers.ai import (
     AITimeoutError,
 )
 from app.providers.gemini import GeminiProvider
+from app.providers.openai import OpenAIProvider
 from app.providers.openrouter import OpenRouterProvider
 from app.repositories.provider_audit import ProviderAuditRepository
 from app.repositories.paid_budget import PaidBudgetRepository
 from app.rules.service import RulesService
-from app.services.ai_generation import AIGenerationService, ModelRoute
+from app.services.ai_generation import (
+    AIGenerationService,
+    ModelRoute,
+    build_ai_generation_service,
+)
 
 
 def offline_rules_service(path: Path) -> RulesService:
@@ -148,6 +153,131 @@ def test_gemini_adapter_maps_neutral_context_and_usage() -> None:
     assert result.usage.input_tokens == 8
     assert result.usage.output_tokens == 5
     assert result.usage.reported_cost_usd is None
+
+
+def test_openai_adapter_uses_configured_prices_and_cached_token_usage() -> None:
+    def response(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        assert request.headers["Authorization"] == "Bearer openai-secret"
+        import json
+
+        payload = json.loads(request.content)
+        assert payload["model"] == "gpt-4o-mini"
+        assert payload["messages"] == [
+            {"role": "system", "content": "grounding"},
+            {"role": "user", "content": "question"},
+        ]
+        assert payload["max_completion_tokens"] == 1024
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "answer"}}],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                    "prompt_tokens_details": {"cached_tokens": 20},
+                },
+            },
+        )
+
+    async def execute() -> AIResult:
+        provider = OpenAIProvider(
+            "gpt-4o-mini",
+            "openai-secret",
+            input_price_per_million_usd=Decimal("0.15"),
+            cached_input_price_per_million_usd=Decimal("0.075"),
+            output_price_per_million_usd=Decimal("0.60"),
+            transport=httpx.MockTransport(response),
+        )
+        try:
+            return await provider.generate(
+                AIRequest((AIMessage("system", "grounding"), AIMessage("user", "question")))
+            )
+        finally:
+            await provider.close()
+
+    result = asyncio.run(execute())
+    assert result.text == "answer"
+    assert result.usage.input_tokens == 100
+    assert result.usage.output_tokens == 50
+    assert result.usage.reported_cost_usd == Decimal("0.0000435")
+
+
+def test_openai_adapter_leaves_unusable_usage_cost_unknown() -> None:
+    async def execute() -> AIResult:
+        provider = OpenAIProvider(
+            "gpt-4o-mini",
+            "openai-secret",
+            input_price_per_million_usd=Decimal("0.15"),
+            cached_input_price_per_million_usd=Decimal("0.075"),
+            output_price_per_million_usd=Decimal("0.60"),
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    json={
+                        "choices": [{"message": {"content": "answer"}}],
+                        "usage": {"prompt_tokens": 10},
+                    },
+                )
+            ),
+        )
+        try:
+            return await provider.generate(AIRequest((AIMessage("user", "question"),)))
+        finally:
+            await provider.close()
+
+    result = asyncio.run(execute())
+    assert result.usage.reported_cost_usd is None
+
+
+def test_openai_settings_build_a_direct_provider_route() -> None:
+    database = make_database()
+    settings = Settings(
+        _env_file=None,
+        llm_primary_provider="openai",
+        llm_primary_model="gpt-4o-mini",
+        llm_primary_model_cost="paid",
+        llm_openai_api_key="test-key",
+        llm_openai_pricing_model="gpt-4o-mini",
+    )
+    service = build_ai_generation_service(settings, database)
+    try:
+        assert len(service.routes) == 1
+        assert isinstance(service.routes[0].adapter, OpenAIProvider)
+        assert service.routes[0].provider == "openai"
+    finally:
+        asyncio.run(service.close())
+        database.dispose()
+
+
+def test_missing_openai_key_does_not_consume_or_lock_paid_budget() -> None:
+    database = make_database()
+    settings = Settings(
+        _env_file=None,
+        llm_primary_provider="openai",
+        llm_primary_model="gpt-4o-mini",
+        llm_primary_model_cost="paid",
+        llm_openai_pricing_model="gpt-4o-mini",
+        llm_paid_enabled=True,
+        llm_monthly_cap_usd=Decimal("20"),
+        llm_paid_minimum_remaining_usd=Decimal("5"),
+    )
+    service = build_ai_generation_service(settings, database)
+    try:
+        with pytest.raises(AIConfigurationError):
+            asyncio.run(
+                service.generate(AIRequest((AIMessage("user", "question"),)))
+            )
+        month_start = datetime.now(timezone.utc).date().replace(day=1)
+        with database.session() as session:
+            budget = PaidBudgetRepository.monthly_budget(session, month_start)
+            assert budget is not None
+            assert budget.spent_usd == Decimal("0")
+            assert budget.reserved_usd == Decimal("0")
+            assert budget.unknown_cost is False
+    finally:
+        asyncio.run(service.close())
+        database.dispose()
 
 
 @pytest.mark.parametrize(
@@ -363,6 +493,7 @@ def test_paid_gate_and_monthly_cap_block_provider_calls() -> None:
             llm_primary_provider="openrouter",
             llm_primary_model="paid-model",
             llm_primary_model_cost="paid",
+            llm_paid_enabled=False,
         ),
         database,
         [ModelRoute("openrouter", "paid-model", "paid", paid)],
@@ -742,20 +873,49 @@ def test_health_summary_redacts_credentials(tmp_path: Path) -> None:
 
 def test_settings_require_cost_classification_and_limit_paid_cap() -> None:
     with pytest.raises(ValueError):
-        Settings(llm_primary_provider="gemini", llm_primary_model="model-without-tier")
+        Settings(
+            _env_file=None,
+            llm_primary_provider="gemini",
+            llm_primary_model="model-without-tier",
+        )
     with pytest.raises(ValueError):
         Settings(
+            _env_file=None,
             llm_primary_provider="gemini",
             llm_primary_model="paid",
             llm_primary_model_cost="paid",
             llm_paid_enabled=True,
-            llm_monthly_cap_usd=Decimal("5.01"),
+            llm_monthly_cap_usd=Decimal("20.01"),
         )
     with pytest.raises(ValueError):
         Settings(
+            _env_file=None,
             llm_monthly_cap_usd=Decimal("0.01"),
             llm_paid_minimum_remaining_usd=Decimal("0.02"),
         )
     with pytest.raises(ValueError):
-        Settings(llm_paid_minimum_remaining_usd=Decimal("0"))
+        Settings(_env_file=None, llm_paid_minimum_remaining_usd=Decimal("0"))
+
+
+def test_settings_accept_openai_routes_with_explicit_matching_pricing_model() -> None:
+    settings = Settings(
+        _env_file=None,
+        llm_primary_provider="openai",
+        llm_primary_model="gpt-4o-mini",
+        llm_primary_model_cost="paid",
+        llm_openai_pricing_model="gpt-4o-mini",
+        llm_paid_enabled=True,
+        llm_monthly_cap_usd=Decimal("20"),
+        llm_paid_minimum_remaining_usd=Decimal("5"),
+    )
+    assert settings.llm_monthly_cap_usd == Decimal("20")
+
+    with pytest.raises(ValueError, match="PRICING_MODEL"):
+        Settings(
+            _env_file=None,
+            llm_primary_provider="openai",
+            llm_primary_model="gpt-4o-mini",
+            llm_primary_model_cost="paid",
+            llm_openai_pricing_model="different-model",
+        )
 

@@ -114,8 +114,12 @@ class AIGenerationService:
                     )
                     route_error = error
                     if route.cost == "paid":
-                        await self._mark_unknown_budget(reservation)
-                        reservation_unknown = True
+                        if isinstance(error, AIConfigurationError):
+                            await self._settle_paid_budget(reservation, Decimal("0"))
+                            reservation = None
+                        else:
+                            await self._mark_unknown_budget(reservation)
+                            reservation_unknown = True
                         break
                     if not error.failover_eligible or attempt >= self.settings.llm_max_retries:
                         break
@@ -291,6 +295,7 @@ class AIGenerationService:
 
 def build_ai_generation_service(settings: Settings, database: Database) -> AIGenerationService:
     from app.providers.gemini import GeminiProvider
+    from app.providers.openai import OpenAIProvider
     from app.providers.openrouter import OpenRouterProvider
 
     routes: list[ModelRoute] = []
@@ -309,16 +314,30 @@ def build_ai_generation_service(settings: Settings, database: Database) -> AIGen
     for provider_name, model, cost in configured:
         if provider_name is None or model is None or cost is None:
             continue
-        api_key = (
-            settings.llm_openrouter_api_key
-            if provider_name == "openrouter"
-            else settings.llm_gemini_api_key
-        )
-        adapter_type = OpenRouterProvider if provider_name == "openrouter" else GeminiProvider
-        adapter = adapter_type(
-            model,
-            api_key,
-            timeout=settings.llm_request_timeout_seconds,
-        )
+        if provider_name == "openai":
+            adapter = OpenAIProvider(
+                model,
+                settings.llm_openai_api_key,
+                timeout=settings.llm_request_timeout_seconds,
+                input_price_per_million_usd=(
+                    settings.llm_openai_input_price_per_million_usd
+                ),
+                cached_input_price_per_million_usd=(
+                    settings.llm_openai_cached_input_price_per_million_usd
+                ),
+                output_price_per_million_usd=settings.llm_openai_output_price_per_million_usd,
+            )
+        elif provider_name == "openrouter":
+            adapter = OpenRouterProvider(
+                model,
+                settings.llm_openrouter_api_key,
+                timeout=settings.llm_request_timeout_seconds,
+            )
+        else:
+            adapter = GeminiProvider(
+                model,
+                settings.llm_gemini_api_key,
+                timeout=settings.llm_request_timeout_seconds,
+            )
         routes.append(ModelRoute(provider_name, model, cost, adapter))
     return AIGenerationService(settings, database, routes)

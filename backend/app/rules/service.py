@@ -107,6 +107,111 @@ class RulesService:
             "refresh_in_progress": self._refreshing,
         }
 
+    def read_verified_rules(self) -> list[dict[str, str]] | None:
+        """Return rules only when the active local dataset matches its verified source."""
+        snapshot = self.read_verified_rules_snapshot()
+        return snapshot[0] if snapshot is not None else None
+
+    def read_verified_ruleset_metadata(self) -> dict[str, str] | None:
+        """Return metadata validated against the same active rules snapshot."""
+        snapshot = self.read_verified_rules_snapshot()
+        return snapshot[1] if snapshot is not None else None
+
+    def read_verified_rules_snapshot(
+        self,
+    ) -> tuple[list[dict[str, str]], dict[str, str]] | None:
+        """Return rules and metadata from one fresh, verified active-manifest read."""
+        try:
+            state = self._read_json(self.storage_dir / "active.json", {})
+            manifest = state.get("active")
+            if (
+                state.get("format_version") != 1
+                or state.get("status") not in {"verified", "failed"}
+                or not isinstance(manifest, dict)
+            ):
+                return None
+
+            rules_name = manifest.get("rules_file")
+            source_name = manifest.get("source_file")
+            if not all(
+                isinstance(name, str) and name and Path(name).name == name
+                for name in (rules_name, source_name)
+            ):
+                return None
+
+            checksum = manifest.get("checksum")
+            if not isinstance(checksum, str) or not re.fullmatch(r"[a-f0-9]{64}", checksum):
+                return None
+            source_path = self.storage_dir / source_name
+            rules_path = self.storage_dir / rules_name
+            if (
+                source_path.stat().st_size > _MAX_DOCUMENT_BYTES
+                or rules_path.stat().st_size > _MAX_DOCUMENT_BYTES
+            ):
+                return None
+            source_bytes = source_path.read_bytes()
+            rules_bytes = rules_path.read_bytes()
+            if hashlib.sha256(source_bytes).hexdigest() != checksum:
+                return None
+
+            verified_at = manifest.get("verified_at")
+            state_verified_at = state.get("last_verified_at")
+            if (
+                not isinstance(verified_at, str)
+                or self._parse_timestamp(verified_at) is None
+                or self._parse_timestamp(verified_at) != self._parse_timestamp(state_verified_at)
+                or not self._is_fresh(verified_at)
+            ):
+                return None
+            source_url = manifest.get("source_url")
+            if not isinstance(source_url, str):
+                return None
+            self._require_wizards_host(source_url)
+            source_text = source_bytes.decode("utf-8-sig", errors="strict")
+            version, publication_date, parsed_rules = self._parse_document(
+                source_text, source_url
+            )
+            if (
+                manifest.get("version") != version
+                or manifest.get("publication_date") != publication_date
+                or type(manifest.get("rule_count")) is not int
+                or manifest["rule_count"] != len(parsed_rules)
+            ):
+                return None
+            latest_official = state.get("latest_known_official")
+            if (
+                not isinstance(latest_official, dict)
+                or latest_official.get("version") != version
+            ):
+                return None
+
+            dataset = json.loads(rules_bytes.decode("utf-8"))
+            if (
+                not isinstance(dataset, dict)
+                or dataset.get("version") != version
+                or dataset.get("publication_date") != publication_date
+                or dataset.get("checksum") != checksum
+                or dataset.get("source_url") != source_url
+                or dataset.get("rules") != parsed_rules
+            ):
+                return None
+            metadata = {
+                "version": version,
+                "checksum": checksum,
+                "source_url": source_url,
+                "publication_date": publication_date,
+            }
+            return parsed_rules, metadata
+        except (
+            OSError,
+            UnicodeDecodeError,
+            ValueError,
+            TypeError,
+            RecursionError,
+            RulesIngestionError,
+        ):
+            return None
+
     def health_summary(self) -> dict:
         state = self.status()
         active = state["latest_verified_local"]

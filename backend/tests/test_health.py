@@ -10,7 +10,13 @@ from pydantic import ValidationError
 from app.core.config import Settings
 from app.main import app, create_app
 from app.providers.scryfall import ScryfallProvider
-from app.schemas.answers import AnswerRequest, AnswerResponse, ComprehensiveRuleSource
+from app.schemas.answers import (
+    AnswerRequest,
+    AnswerResponse,
+    AnswerSource,
+    ComprehensiveRuleSource,
+    ConversationTurn,
+)
 from app.schemas.auth import AuthResponse, LoginRequest, LogoutResponse, RegisterRequest
 from app.schemas.cards import CardDetail, CardSearchRequest, CardSearchResponse
 from app.schemas.conversations import (
@@ -77,7 +83,7 @@ def test_health_endpoint(tmp_path: Path) -> None:
     provider, rules_service = make_health_dependencies(tmp_path)
     with TestClient(
         create_app(
-            Settings(database_url=None, rules_refresh_mode="external"),
+            Settings(_env_file=None, database_url=None, rules_refresh_mode="external"),
             card_provider=provider,
             rules_service=rules_service,
         )
@@ -398,7 +404,9 @@ def test_frontend_contract_fixture_matches_openapi() -> None:
         "CardSearchResponse": CardSearchResponse.model_json_schema(),
         "AnswerRequest": AnswerRequest.model_json_schema(),
         "AnswerResponse": AnswerResponse.model_json_schema(),
+        "AnswerSource": AnswerSource.model_json_schema(),
         "ComprehensiveRuleSource": ComprehensiveRuleSource.model_json_schema(),
+        "ConversationTurn": ConversationTurn.model_json_schema(),
         "ConversationCreateRequest": ConversationCreateRequest.model_json_schema(),
         "ConversationDetail": ConversationDetail.model_json_schema(),
         "ConversationListResponse": ConversationListResponse.model_json_schema(),

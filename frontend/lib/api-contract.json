@@ -23,7 +23,7 @@
     "status": ["ok", "degraded", "unavailable", "not_configured", "stale"]
   },
   "CardDetail": {
-    "fields": ["id", "name", "mana_cost", "type_line", "oracle_text", "set_name", "rarity", "image_urls", "rulings", "source", "source_updated_at"]
+    "fields": ["id", "name", "scryfall_uri", "mana_cost", "type_line", "oracle_text", "set_name", "rarity", "image_urls", "rulings", "source", "source_updated_at"]
   },
   "CardSearchRequest": {
     "fields": ["q", "limit"]
@@ -31,12 +31,20 @@
   "CardSearchResponse": {
     "fields": ["cards", "total"]
   },
+  "ConversationTurn": {
+    "fields": ["role", "content"],
+    "role": ["user", "assistant"]
+  },
   "AnswerRequest": {
-    "fields": ["conversation_id", "question", "card_names", "guest"]
+    "fields": ["conversation_id", "question", "card_names", "guest", "conversation_context"]
   },
   "AnswerResponse": {
     "fields": ["answer_id", "conversation_id", "verdict", "explanation", "comprehensive_rules", "card_rulings", "additional_considerations", "model", "evidence_status", "disclaimer"],
     "evidence_status": ["complete", "partial", "insufficient"]
+  },
+  "AnswerSource": {
+    "fields": ["id", "source_type", "source_reference", "source_url", "evidence_text", "retrieved_at"],
+    "source_type": ["comprehensive_rules", "card_ruling", "oracle_text"]
   },
   "ComprehensiveRuleSource": {
     "fields": ["section", "title", "text", "source_url", "checksum", "ruleset_version"]

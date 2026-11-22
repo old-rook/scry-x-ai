@@ -36,14 +36,35 @@ class Settings(BaseSettings):
     llm_gemini_api_key: SecretStr | None = Field(
         default=None, validation_alias="LLM_GEMINI_API_KEY"
     )
-    llm_primary_provider: Literal["openrouter", "gemini"] | None = Field(
+    llm_openai_api_key: SecretStr | None = Field(
+        default=None, validation_alias="LLM_OPENAI_API_KEY"
+    )
+    llm_openai_pricing_model: str | None = Field(
+        default=None, validation_alias="LLM_OPENAI_PRICING_MODEL"
+    )
+    llm_openai_input_price_per_million_usd: Decimal = Field(
+        default=Decimal("0.15"),
+        validation_alias="LLM_OPENAI_INPUT_PRICE_PER_MILLION_USD",
+        gt=0,
+    )
+    llm_openai_cached_input_price_per_million_usd: Decimal = Field(
+        default=Decimal("0.075"),
+        validation_alias="LLM_OPENAI_CACHED_INPUT_PRICE_PER_MILLION_USD",
+        gt=0,
+    )
+    llm_openai_output_price_per_million_usd: Decimal = Field(
+        default=Decimal("0.60"),
+        validation_alias="LLM_OPENAI_OUTPUT_PRICE_PER_MILLION_USD",
+        gt=0,
+    )
+    llm_primary_provider: Literal["openrouter", "gemini", "openai"] | None = Field(
         default=None, validation_alias="LLM_PRIMARY_PROVIDER"
     )
     llm_primary_model: str | None = Field(default=None, validation_alias="LLM_PRIMARY_MODEL")
     llm_primary_model_cost: Literal["free", "paid"] | None = Field(
         default=None, validation_alias="LLM_PRIMARY_MODEL_COST"
     )
-    llm_fallback_provider: Literal["openrouter", "gemini"] | None = Field(
+    llm_fallback_provider: Literal["openrouter", "gemini", "openai"] | None = Field(
         default=None, validation_alias="LLM_FALLBACK_PROVIDER"
     )
     llm_fallback_model: str | None = Field(default=None, validation_alias="LLM_FALLBACK_MODEL")
@@ -52,7 +73,7 @@ class Settings(BaseSettings):
     )
     llm_paid_enabled: bool = Field(default=False, validation_alias="LLM_PAID_ENABLED")
     llm_monthly_cap_usd: Decimal = Field(
-        default=Decimal("0"), validation_alias="LLM_MONTHLY_CAP_USD", ge=0, le=5
+        default=Decimal("0"), validation_alias="LLM_MONTHLY_CAP_USD", ge=0, le=20
     )
     llm_paid_minimum_remaining_usd: Decimal = Field(
         default=Decimal("1.00"),
@@ -70,7 +91,11 @@ class Settings(BaseSettings):
         default=2, validation_alias="LLM_RETRY_MAX_DELAY_SECONDS", ge=0, le=8
     )
 
-    @field_validator("llm_primary_model", "llm_fallback_model")
+    @field_validator(
+        "llm_primary_model",
+        "llm_fallback_model",
+        "llm_openai_pricing_model",
+    )
     @classmethod
     def validate_model_identifier(cls, value: str | None) -> str | None:
         if value is not None and (not value.strip() or len(value) > 200):
@@ -95,10 +120,14 @@ class Settings(BaseSettings):
                 raise ValueError("Each configured LLM model requires a free/paid cost classification")
             if model is None and cost is not None:
                 raise ValueError("LLM cost classification requires a configured model")
+            if provider == "openai" and model != self.llm_openai_pricing_model:
+                raise ValueError(
+                    "LLM_OPENAI_PRICING_MODEL must match each configured OpenAI model"
+                )
         if self.llm_fallback_model is not None and self.llm_primary_model is None:
             raise ValueError("LLM fallback requires a configured primary model")
         if self.llm_paid_enabled and self.llm_monthly_cap_usd <= 0:
-            raise ValueError("Paid LLM usage requires a positive monthly cap of at most USD 5")
+            raise ValueError("Paid LLM usage requires a positive monthly cap of at most USD 20")
         if (
             self.llm_monthly_cap_usd > 0
             and self.llm_paid_minimum_remaining_usd > self.llm_monthly_cap_usd
