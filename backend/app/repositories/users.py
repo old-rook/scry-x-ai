@@ -18,3 +18,19 @@ class UserRepository:
     def get(session: Session, user_id: UUID) -> User | None:
         return session.get(User, user_id)
 
+    @staticmethod
+    def get_by_email(session: Session, email: str) -> User | None:
+        return session.scalar(select(User).where(User.email == email.lower().strip()))
+
+    @staticmethod
+    def create_authenticated(
+        session: Session,
+        email: str,
+        password_hash: str,
+        role: str = "user",
+    ) -> User:
+        user = User(email=email.lower().strip(), password_hash=password_hash, role=role)
+        session.add(user)
+        session.flush()
+        return user
+

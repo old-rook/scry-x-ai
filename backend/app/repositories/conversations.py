@@ -27,6 +27,18 @@ class ConversationRepository:
         return session.scalar(statement)
 
     @staticmethod
+    @staticmethod
+    def require_owned(
+        session: Session,
+        conversation_id: UUID,
+        user_id: UUID,
+    ) -> Conversation:
+        conversation = ConversationRepository.get_for_user(session, conversation_id, user_id)
+        if conversation is None:
+            raise LookupError("Conversation not found")
+        return conversation
+
+    @staticmethod
     def list_for_user(session: Session, user_id: UUID) -> list[Conversation]:
         statement = (
             select(Conversation)

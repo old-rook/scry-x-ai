@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import Settings
+from app.schemas.auth import AuthResponse, LoginRequest, LogoutResponse, RegisterRequest
 from app.db.base import Base
 from app.db.database import Database
 from app.db.models import Conversation, Message, User

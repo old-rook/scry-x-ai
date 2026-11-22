@@ -4,6 +4,7 @@ from contextlib import contextmanager
 
 from fastapi import HTTPException, Request, status
 from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from pydantic import SecretStr
@@ -16,9 +17,21 @@ class Database:
     def __init__(self, database_url: SecretStr | str | None) -> None:
         if isinstance(database_url, SecretStr):
             database_url = database_url.get_secret_value()
-        self.engine: Engine | None = (
-            create_engine(database_url, pool_pre_ping=True) if database_url else None
-        )
+        if database_url and database_url.startswith("sqlite"):
+            if ":memory:" in database_url:
+                self.engine: Engine | None = create_engine(
+                    database_url,
+                    poolclass=StaticPool,
+                    connect_args={"check_same_thread": False},
+                )
+            else:
+                self.engine = create_engine(
+                    database_url,
+                    pool_pre_ping=True,
+                    connect_args={"check_same_thread": False},
+                )
+        else:
+            self.engine = create_engine(database_url, pool_pre_ping=True) if database_url else None
         self._session_factory = (
             sessionmaker(bind=self.engine, autoflush=False, expire_on_commit=False)
             if self.engine is not None

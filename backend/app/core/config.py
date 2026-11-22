@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     app_name: str = "Scry-X-AI"
     app_version: str = "0.1.0"
     database_url: SecretStr | None = None
+    jwt_signing_key: SecretStr | None = None
+    access_token_lifetime_minutes: Literal[15] = 15
     app_environment: Literal["development", "test", "staging", "production"] = Field(
         default="development",
         validation_alias="APP_ENV",
