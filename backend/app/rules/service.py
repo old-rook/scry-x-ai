@@ -21,7 +21,7 @@ _EFFECTIVE_DATE = re.compile(
     re.IGNORECASE,
 )
 _TOKEN = re.compile(r"[a-z0-9]+")
-_REQUIRED_SECTIONS = {str(section) for section in range(100, 900, 100)}
+_REQUIRED_MAJOR_GROUPS = frozenset(range(100, 1000, 100))
 _MIN_RULES = 500
 _MAX_RULES = 10_000
 _MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
@@ -251,7 +251,7 @@ class RulesService:
         except ValueError:
             raise RulesIngestionError("invalid_document") from None
 
-        sections: set[str] = set()
+        major_groups: set[int] = set()
         rules: list[dict[str, str]] = []
         current: dict[str, str] | None = None
         for line in text.splitlines():
@@ -262,7 +262,7 @@ class RulesService:
                 continue
             rule_id, body = rule_match.groups()
             section = rule_id.split(".", 1)[0]
-            sections.add(section)
+            major_groups.add((int(section) // 100) * 100)
             if current is not None:
                 rules.append(current)
             current = {
@@ -272,7 +272,7 @@ class RulesService:
             }
         if current is not None:
             rules.append(current)
-        if not rules or not _REQUIRED_SECTIONS.issubset(sections):
+        if not rules or not _REQUIRED_MAJOR_GROUPS.issubset(major_groups):
             raise RulesIngestionError("missing_sections")
         if len({rule["id"] for rule in rules}) != len(rules):
             raise RulesIngestionError("invalid_document")

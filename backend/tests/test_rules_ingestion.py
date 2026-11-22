@@ -36,11 +36,16 @@ def valid_document() -> bytes:
         "Introduction",
         "Contents",
     ]
-    for section in range(100, 900, 100):
-        lines.append(f"{section}. Section heading")
-        for number in range(1, 66):
-            lines.append(f"{section}.{number}. Sample rule text for section {section}.")
-            lines.append("    This indented sentence is part of the rule.")
+    for major_group in range(100, 1000, 100):
+        sections = range(601, 617) if major_group == 600 else (major_group,)
+        for section in sections:
+            lines.append(f"{section}. Section heading")
+            rule_count = 1 if major_group == 600 else 65
+            for number in range(1, rule_count + 1):
+                lines.append(
+                    f"{section}.{number}. Sample rule text for section {section}."
+                )
+                lines.append("    This indented sentence is part of the rule.")
     return "\n".join(lines).encode("utf-8")
 
 
@@ -79,10 +84,14 @@ async def test_valid_document_is_parsed_indexed_checksummed_and_activated(tmp_pa
 
         assert manifest["version"] == "20261106"
         assert manifest["publication_date"] == "2026-11-06"
-        assert manifest["rule_count"] == 520
+        assert manifest["rule_count"] == 536
         assert manifest["checksum"] == hashlib.sha256(document).hexdigest()
         assert stored_source == document
         assert parsed["rules"][0]["id"] == "100.1"
+        rule_sections = {rule["section"] for rule in parsed["rules"]}
+        assert "600" not in rule_sections
+        assert {str(section) for section in range(601, 617)} <= rule_sections
+        assert "900" in rule_sections
         assert "indented sentence" in parsed["rules"][0]["text"]
         assert "100.1" in parsed["index"]["sentence"]
         assert service.status()["status"] == "verified"
@@ -131,17 +140,16 @@ async def test_filename_date_must_match_document_effective_date(tmp_path: Path) 
 
 @run_async
 async def test_implausible_rule_count_is_rejected(tmp_path: Path) -> None:
-    document = valid_document().decode().replace("100.65. Sample rule text for section 100.\n", "")
-    # Keep the required sections while remaining below the minimum count.
-    for section in range(100, 900, 100):
-        for number in range(1, 66):
-            if number != 1:
-                document = document.replace(
-                    f"{section}.{number}. Sample rule text for section {section}.\n"
-                    "    This indented sentence is part of the rule.\n",
-                    "",
-                )
-    service = make_service(tmp_path, document.encode())
+    lines = [
+        "Magic: The Gathering Comprehensive Rules",
+        "These rules are effective as of November 6, 2026.",
+        "Introduction",
+        "Contents",
+    ]
+    for major_group in range(100, 1000, 100):
+        sections = range(601, 617) if major_group == 600 else (major_group,)
+        lines.extend(f"{section}.1. Minimal sample rule." for section in sections)
+    service = make_service(tmp_path, "\n".join(lines).encode())
 
     try:
         assert await service.refresh() is False
@@ -374,7 +382,7 @@ def test_admin_rules_status_and_manual_refresh_require_admin(tmp_path: Path) -> 
         "source_url": RULES_URL,
         "rules_file": "rules-fixture.json",
         "source_file": "source-fixture.txt",
-        "rule_count": 520,
+        "rule_count": 536,
     }
     (tmp_path / "active.json").write_text(
         json.dumps(
