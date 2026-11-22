@@ -46,6 +46,9 @@ def valid_document() -> bytes:
                     f"{section}.{number}. Sample rule text for section {section}."
                 )
                 lines.append("    This indented sentence is part of the rule.")
+                if section == 100 and number == 1:
+                    lines.append("100.1a Lettered subrule text.")
+                    lines.append("100.1b Another lettered subrule.")
     return "\n".join(lines).encode("utf-8")
 
 
@@ -84,10 +87,15 @@ async def test_valid_document_is_parsed_indexed_checksummed_and_activated(tmp_pa
 
         assert manifest["version"] == "20261106"
         assert manifest["publication_date"] == "2026-11-06"
-        assert manifest["rule_count"] == 536
+        assert manifest["rule_count"] == 538
         assert manifest["checksum"] == hashlib.sha256(document).hexdigest()
         assert stored_source == document
         assert parsed["rules"][0]["id"] == "100.1"
+        assert parsed["rules"][1] == {
+            "id": "100.1a",
+            "section": "100",
+            "text": "100.1a Lettered subrule text.",
+        }
         rule_sections = {rule["section"] for rule in parsed["rules"]}
         assert "600" not in rule_sections
         assert {str(section) for section in range(601, 617)} <= rule_sections

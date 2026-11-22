@@ -9,6 +9,7 @@ from typing import Any
 
 from app.providers.ai import (
     AIAuditPersistenceError,
+    AIAuthenticationError,
     AIConfigurationError,
     AIErrorClass,
     AIProviderError,
@@ -40,6 +41,10 @@ in supplied evidence. Do not output an evidence status or citations in any other
 _INSUFFICIENT_EXPLANATION = (
     "I can’t verify an answer from the currently available official rules or Scryfall "
     "card evidence. Please provide the relevant card text or consult the current official rules."
+)
+_UNVALIDATED_ANSWER_EXPLANATION = (
+    "I couldn’t validate an answer against the retrieved evidence. The available sources are "
+    "shown below, but the answer itself could not be verified."
 )
 _DISCLAIMER = (
     "Unofficial rules research only; this is not an official tournament ruling."
@@ -112,7 +117,11 @@ class AnswerService:
         )
         try:
             result = await self.ai_generation_service.generate(
-                AIRequest(messages=messages, max_output_tokens=900)
+                AIRequest(
+                    messages=messages,
+                    max_output_tokens=900,
+                    response_format="json_object",
+                )
             )
         except AIAuditPersistenceError:
             raise AnswerServiceError(
@@ -121,6 +130,12 @@ class AnswerService:
         except AIConfigurationError:
             raise AnswerServiceError(
                 503, "ai_unavailable", "Answer generation is not available"
+            ) from None
+        except AIAuthenticationError:
+            raise AnswerServiceError(
+                503,
+                "ai_authentication_failed",
+                "The AI provider rejected its credentials or model permissions",
             ) from None
         except AIProviderError as error:
             if error.classification == AIErrorClass.TIMEOUT:
@@ -145,7 +160,21 @@ class AnswerService:
             or result.model != result.model.strip()
             or len(result.model) > 200
         ):
-            return self._insufficient_response(request)
+            return self._insufficient_response(
+                request,
+                available_rules=available_rules,
+                available_cards=available_cards,
+                metadata=metadata,
+                model=(
+                    result.model
+                    if isinstance(result.model, str)
+                    and result.model.strip()
+                    and result.model == result.model.strip()
+                    and len(result.model) <= 200
+                    else "not_used"
+                ),
+                explanation=_UNVALIDATED_ANSWER_EXPLANATION,
+            )
 
         rule_refs = parsed["rule_refs"]
         card_refs = parsed["card_refs"]
@@ -154,11 +183,25 @@ class AnswerService:
             or any(reference not in available_rules for reference in rule_refs)
             or any(reference not in available_cards for reference in card_refs)
         ):
-            return self._insufficient_response(request)
+            return self._insufficient_response(
+                request,
+                available_rules=available_rules,
+                available_cards=available_cards,
+                metadata=metadata,
+                model=result.model,
+                explanation=_UNVALIDATED_ANSWER_EXPLANATION,
+            )
 
         if rule_refs and metadata is None:
             # A rules citation is never returned without active, verified source metadata.
-            return self._insufficient_response(request)
+            return self._insufficient_response(
+                request,
+                available_rules=available_rules,
+                available_cards=available_cards,
+                metadata=metadata,
+                model=result.model,
+                explanation=_UNVALIDATED_ANSWER_EXPLANATION,
+            )
         citations = [available_cards[reference][1] for reference in card_refs]
         available_count = len(available_rules) + len(available_cards)
         cited_count = len(rule_refs) + len(card_refs)
@@ -180,16 +223,35 @@ class AnswerService:
         )
 
     @staticmethod
-    def _insufficient_response(request: AnswerRequest) -> AnswerResponse:
+    def _insufficient_response(
+        request: AnswerRequest,
+        *,
+        available_rules: dict[str, RuleEvidence] | None = None,
+        available_cards: dict[str, tuple[CardEvidence, AnswerSource]] | None = None,
+        metadata: dict[str, str] | None = None,
+        model: str = "not_used",
+        explanation: str = _INSUFFICIENT_EXPLANATION,
+    ) -> AnswerResponse:
         return AnswerResponse(
             answer_id=str(uuid.uuid4()),
             conversation_id=request.conversation_id,
             verdict="unclear",
-            explanation=_INSUFFICIENT_EXPLANATION,
-            comprehensive_rules=[],
-            card_rulings=[],
+            explanation=explanation,
+            comprehensive_rules=(
+                [
+                    AnswerService._comprehensive_rule(rule, metadata)
+                    for rule in available_rules.values()
+                ]
+                if metadata is not None and available_rules is not None
+                else []
+            ),
+            card_rulings=(
+                [source for _, source in available_cards.values()]
+                if available_cards is not None
+                else []
+            ),
             additional_considerations=[],
-            model="not_used",
+            model=model,
             evidence_status="insufficient",
             disclaimer=_DISCLAIMER,
         )

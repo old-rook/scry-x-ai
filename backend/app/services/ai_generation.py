@@ -10,6 +10,7 @@ from app.db.database import Database
 from app.providers.ai import (
     AIAuditPersistenceError,
     AIBudgetExceededError,
+    AIAuthenticationError,
     AIConfigurationError,
     AIErrorClass,
     AIInvalidRequestError,
@@ -114,7 +115,7 @@ class AIGenerationService:
                     )
                     route_error = error
                     if route.cost == "paid":
-                        if isinstance(error, AIConfigurationError):
+                        if isinstance(error, (AIAuthenticationError, AIConfigurationError)):
                             await self._settle_paid_budget(reservation, Decimal("0"))
                             reservation = None
                         else:
@@ -318,6 +319,7 @@ def build_ai_generation_service(settings: Settings, database: Database) -> AIGen
             adapter = OpenAIProvider(
                 model,
                 settings.llm_openai_api_key,
+                base_url=settings.llm_openai_base_url,
                 timeout=settings.llm_request_timeout_seconds,
                 input_price_per_million_usd=(
                     settings.llm_openai_input_price_per_million_usd

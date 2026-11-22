@@ -57,7 +57,7 @@ The guest chat keeps up to five recent conversations in versioned browser-local 
 
 Copy `.env.example` to `.env`. The backend reads `APP_NAME`, `APP_ENV`, `API_V1_PREFIX`, `CORS_ORIGINS`, `RULES_*`, and optional server-only `LLM_*` settings. The frontend reads `NEXT_PUBLIC_API_BASE_URL`. Rules files are stored under `backend/data/rules` by default; `RULES_STORAGE_DIR` can select another persistent local directory. `RULES_REFRESH_MODE=local` enables the in-process background refresh (every 24 hours by default). Set it to `external` to disable recurring scheduling; stale startup verification remains enabled.
 
-AI provider setup is opt-in. Configure `LLM_PRIMARY_PROVIDER`/`LLM_PRIMARY_MODEL` and optionally one fallback with the provider/model identifiers selected by the operator. Every configured model must be explicitly classified as `free` or `paid`; confirm current pricing and eligibility with the provider rather than assuming a model is free. API keys use `LLM_OPENROUTER_API_KEY`, `LLM_GEMINI_API_KEY`, or `LLM_OPENAI_API_KEY` and must remain server-side. The health availability value reflects local configuration/credential readiness, not a live upstream connectivity check.
+AI provider setup is opt-in. Configure `LLM_PRIMARY_PROVIDER`/`LLM_PRIMARY_MODEL` and optionally one fallback with the provider/model identifiers selected by the operator. Every configured model must be explicitly classified as `free` or `paid`; confirm current pricing and eligibility with the provider rather than assuming a model is free. API keys use `LLM_OPENROUTER_API_KEY`, `LLM_GEMINI_API_KEY`, or `LLM_OPENAI_API_KEY` and must remain server-side. `LLM_OPENAI_BASE_URL` configures the OpenAI-compatible HTTPS endpoint; it defaults to `https://api.openai.com/v1`. The health availability value reflects local configuration/credential readiness, not a live upstream connectivity check.
 
 The current local answer configuration uses OpenAI `gpt-4o-mini`, classified as paid. Set the API key privately in `.env` or a secret manager; never put it in frontend variables or source control. The `.env` file uses these model settings:
 
@@ -65,6 +65,7 @@ The current local answer configuration uses OpenAI `gpt-4o-mini`, classified as 
 LLM_PRIMARY_PROVIDER=openai
 LLM_PRIMARY_MODEL=gpt-4o-mini
 LLM_PRIMARY_MODEL_COST=paid
+LLM_OPENAI_BASE_URL=https://openai.vocareum.com/v1
 LLM_PAID_ENABLED=true
 LLM_MONTHLY_CAP_USD=20
 LLM_PAID_MINIMUM_REMAINING_USD=5
@@ -74,7 +75,7 @@ LLM_OPENAI_CACHED_INPUT_PRICE_PER_MILLION_USD=0.075
 LLM_OPENAI_OUTPUT_PRICE_PER_MILLION_USD=0.60
 ```
 
-Set `LLM_OPENAI_API_KEY` privately. Direct OpenAI chat responses provide token counts rather than dollar costs, so the backend estimates cost using `LLM_OPENAI_PRICING_MODEL` and the configurable input, cached-input, and output rates in `.env`. The initial `gpt-4o-mini` standard rates are USD 0.15, 0.075, and 0.60 per million tokens respectively; verify current [OpenAI API pricing](https://developers.openai.com/api/docs/pricing) and update all rates when changing model or pricing. If reliable usage counts are absent, budget accounting fails closed.
+Set `LLM_OPENAI_API_KEY` privately. The configured base URL must provide the OpenAI Chat Completions API over HTTPS. Direct OpenAI chat responses provide token counts rather than dollar costs, so the backend estimates cost using `LLM_OPENAI_PRICING_MODEL` and the configurable input, cached-input, and output rates in `.env`. The initial `gpt-4o-mini` standard rates are USD 0.15, 0.075, and 0.60 per million tokens respectively; verify current [OpenAI API pricing](https://developers.openai.com/api/docs/pricing) and update all rates when changing model or pricing. If reliable usage counts are absent, budget accounting fails closed.
 
 Paid models are blocked unless `LLM_PAID_ENABLED=true`; enabling paid usage also requires a positive `LLM_MONTHLY_CAP_USD` no greater than USD 20. `LLM_PAID_MINIMUM_REMAINING_USD` defaults to USD 1.00 and must be positive and, when a positive monthly cap is configured, no greater than that cap. Before paid generation, the backend atomically reserves the entire remaining budget (`effective cap - settled spend`) exclusively in the database, shared across processes. A later sequential generation may reserve the newly remaining amount after the previous reservation settles, provided it meets the minimum-remaining threshold. Unknown/malformed/negative cost consumes and blocks the remaining app budget for that month, while a usable response is still returned. Reservations left by a crash remain held for the rest of that month.
 

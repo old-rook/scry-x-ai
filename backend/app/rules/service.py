@@ -13,7 +13,10 @@ from urllib.parse import unquote, urljoin, urlparse
 import httpx
 
 
-_RULE_LINE = re.compile(r"^(\d{3,4}\.\d+[a-z]?)\.\s*(.*)$", re.IGNORECASE)
+_RULE_LINE = re.compile(
+    r"^(\d{3,4}\.\d+[a-z]?)(\.?)\s+(.*)$",
+    re.IGNORECASE,
+)
 _RULE_HEADER = re.compile(r"magic:\s*the gathering\s+comprehensive rules", re.IGNORECASE)
 _EFFECTIVE_DATE = re.compile(
     r"(?:effective|in effect)\s+(?:as of\s+)?"
@@ -458,7 +461,7 @@ class RulesService:
                 if current is not None and line[:1].isspace() and line.strip():
                     current["text"] += " " + line.strip()
                 continue
-            rule_id, body = rule_match.groups()
+            rule_id, separator, body = rule_match.groups()
             section = rule_id.split(".", 1)[0]
             major_groups.add((int(section) // 100) * 100)
             if current is not None:
@@ -466,7 +469,7 @@ class RulesService:
             current = {
                 "id": rule_id,
                 "section": section,
-                "text": f"{rule_id}. {body}".strip(),
+                "text": f"{rule_id}{separator} {body}".strip(),
             }
         if current is not None:
             rules.append(current)

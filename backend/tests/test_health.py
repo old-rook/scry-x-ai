@@ -35,7 +35,11 @@ def make_health_dependencies(tmp_path: Path, *, scryfall_status: int = 200):
         transport=httpx.MockTransport(
             lambda request: httpx.Response(
                 scryfall_status,
-                json={"object": "catalog"} if scryfall_status == 200 else {},
+                json={
+                    "object": "catalog",
+                    "data": ["Creature"],
+                    "total_values": 1,
+                } if scryfall_status == 200 else {},
                 request=request,
             )
         )

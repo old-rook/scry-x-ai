@@ -42,15 +42,21 @@ class OpenRouterProvider:
     async def generate(self, request: AIRequest) -> AIResult:
         if not self.configured or self._api_key is None:
             raise AIConfigurationError()
+        body: dict[str, object] = {
+            "model": self.model,
+            "messages": [
+                {"role": message.role, "content": message.content}
+                for message in request.messages
+            ],
+            "max_tokens": request.max_output_tokens,
+        }
+        if request.response_format == "json_object":
+            body["response_format"] = {"type": "json_object"}
         try:
             response = await self._client.post(
                 "/chat/completions",
                 headers={"Authorization": f"Bearer {self._api_key.get_secret_value()}"},
-                json={
-                    "model": self.model,
-                    "messages": [{"role": message.role, "content": message.content} for message in request.messages],
-                    "max_tokens": request.max_output_tokens,
-                },
+                json=body,
             )
         except (httpx.HTTPError, ValueError) as error:
             raise safe_provider_error(error) from None

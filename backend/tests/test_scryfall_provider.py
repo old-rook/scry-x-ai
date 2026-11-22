@@ -326,14 +326,19 @@ def test_concurrent_search_requests_obey_search_rate_limit() -> None:
 def test_concurrent_standard_requests_obey_rate_limit() -> None:
     request_times: list[float] = []
 
-    def handle(_: httpx.Request) -> httpx.Response:
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/catalog/card-types"
         request_times.append(time.monotonic())
-        return httpx.Response(200, json={"object": "catalog"})
+        return httpx.Response(
+            200,
+            json={"object": "catalog", "data": ["Creature"], "total_values": 1},
+        )
 
     async def request_twice() -> None:
         provider = ScryfallProvider(transport=httpx.MockTransport(handle))
         try:
-            await asyncio.gather(provider.health_check(), provider.health_check())
+            results = await asyncio.gather(provider.health_check(), provider.health_check())
+            assert results == [True, True]
         finally:
             await provider.close()
 

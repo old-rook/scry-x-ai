@@ -3,7 +3,7 @@ from typing import Literal
 import httpx
 from pydantic import SecretStr
 
-from app.providers.ai import AIConfigurationError, AIInvalidResponseError, AIMessage, AIRequest, AIResult, AIUsage
+from app.providers.ai import AIConfigurationError, AIInvalidResponseError, AIRequest, AIResult, AIUsage
 from app.providers.ai_http import parse_response, safe_provider_error, usage_values
 
 
@@ -45,7 +45,15 @@ class GeminiProvider:
             for message in request.messages
             if message.role != "system"
         ]
-        body = {"contents": contents, "generationConfig": {"maxOutputTokens": request.max_output_tokens}}
+        generation_config: dict[str, object] = {
+            "maxOutputTokens": request.max_output_tokens
+        }
+        if request.response_format == "json_object":
+            generation_config["responseMimeType"] = "application/json"
+        body: dict[str, object] = {
+            "contents": contents,
+            "generationConfig": generation_config,
+        }
         if system_parts:
             body["systemInstruction"] = {"parts": [{"text": "\n".join(system_parts)}]}
         try:

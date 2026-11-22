@@ -85,6 +85,7 @@ class AIMessage:
 class AIRequest:
     messages: tuple[AIMessage, ...]
     max_output_tokens: int = 1024
+    response_format: Literal["json_object"] | None = None
 
 
 @dataclass(frozen=True)

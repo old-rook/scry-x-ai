@@ -75,8 +75,12 @@ class ScryfallProvider:
 
     async def health_check(self) -> bool:
         try:
-            data = await self._request_json("GET", "/")
-            return isinstance(data, dict) and data.get("object") == "catalog"
+            data = await self._request_json("GET", "/catalog/card-types")
+            return (
+                data.get("object") == "catalog"
+                and isinstance(data.get("data"), list)
+                and type(data.get("total_values")) is int
+            )
         except CardProviderError:
             return False
 

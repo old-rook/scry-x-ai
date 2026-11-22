@@ -28,6 +28,7 @@ class OpenAIProvider:
         input_price_per_million_usd: Decimal,
         cached_input_price_per_million_usd: Decimal,
         output_price_per_million_usd: Decimal,
+        base_url: str = "https://api.openai.com/v1",
         timeout: float = 20,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
@@ -41,7 +42,7 @@ class OpenAIProvider:
             and bool(self._api_key.get_secret_value().strip())
         )
         self._client = httpx.AsyncClient(
-            base_url="https://api.openai.com/v1",
+            base_url=base_url,
             timeout=httpx.Timeout(timeout),
             transport=transport,
         )
@@ -52,18 +53,21 @@ class OpenAIProvider:
     async def generate(self, request: AIRequest) -> AIResult:
         if not self.configured or self._api_key is None:
             raise AIConfigurationError()
+        body: dict[str, object] = {
+            "model": self.model,
+            "messages": [
+                {"role": message.role, "content": message.content}
+                for message in request.messages
+            ],
+            "max_completion_tokens": request.max_output_tokens,
+        }
+        if request.response_format == "json_object":
+            body["response_format"] = {"type": "json_object"}
         try:
             response = await self._client.post(
                 "/chat/completions",
                 headers={"Authorization": f"Bearer {self._api_key.get_secret_value()}"},
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {"role": message.role, "content": message.content}
-                        for message in request.messages
-                    ],
-                    "max_completion_tokens": request.max_output_tokens,
-                },
+                json=body,
             )
         except (httpx.HTTPError, ValueError) as error:
             raise safe_provider_error(error) from None

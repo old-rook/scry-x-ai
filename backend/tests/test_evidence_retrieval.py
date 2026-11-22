@@ -46,8 +46,31 @@ def rules_document() -> bytes:
                     lines.append(
                         f"{rule_section}.{number}. Sample procedure for section {rule_section}."
                     )
+    lines.extend(
+        [
+            "702.4. Double Strike",
+            "702.4a Double strike is a static ability that modifies combat damage rules.",
+            "702.4b A creature with double strike deals combat damage in each combat damage step.",
+            "702.19. Trample",
+            "702.19a Trample modifies how an attacking creature assigns combat damage. (See rule 510, Combat Damage Step.)",
+            "702.19b The controller of an attacking creature with trample assigns lethal damage to blockers before assigning excess damage to the player it attacks. This occurs during the same combat damage step.",
+            "510.1a Each attacking creature and blocking creature assigns combat damage equal to its power.",
+            "510.1c A blocked creature assigns combat damage to the creatures blocking it.",
+            "120.6 Damage marked on a creature is lethal if it is equal to or greater than its toughness.",
+        ]
+    )
     lines.append(
         "601.2f. A spell's targets are chosen as it is cast, and each target must be legal."
+    )
+    lines.extend(
+        [
+            "613.1d Layer 4: Type-changing effects are applied.",
+            "305.7 Land subtypes set by an effect replace old land subtypes.",
+            "305.8 Lands without the basic supertype are nonbasic.",
+            "715.2 A chapter symbol represents a chapter ability.",
+            "715.3 Sagas use lore counters to track their progress.",
+            "715.4 A Saga with no chapter abilities is not sacrificed by its final chapter.",
+        ]
     )
     return "\n".join(lines).encode("utf-8")
 
@@ -110,6 +133,71 @@ def test_explicit_and_keyword_rules_are_retrieved_with_output_bounds(tmp_path: P
     assert result.cards[0].name == "Lightning Bolt"
     assert result.cards[0].oracle_text == CARD["oracle_text"]
     assert provider.queries == ['!"Lightning Bolt"']
+
+
+def test_mechanic_questions_retrieve_lettered_definition_and_combat_rules(
+    tmp_path: Path,
+) -> None:
+    service = make_rules_service(tmp_path)
+    provider = FixtureCardProvider(rows=[])
+    try:
+        double_strike = asyncio.run(
+            retrieve_evidence("What is double strike?", service, provider)
+        )
+        trample = asyncio.run(
+            retrieve_evidence(
+                "What happens if my 2/1 Trample gets blocked by a 1/1 creature?",
+                service,
+                provider,
+            )
+        )
+    finally:
+        asyncio.run(service.close())
+
+    double_strike_ids = {rule.rule_id for rule in double_strike.rules}
+    trample_ids = {rule.rule_id for rule in trample.rules}
+    assert "702.4a" in double_strike_ids
+    assert "702.4b" in double_strike_ids
+    assert "702.19b" in trample_ids
+    assert "510.1c" in trample_ids
+    assert "120.6" in trample_ids
+    assert provider.queries == []
+
+
+def test_land_type_changing_effect_with_saga_retrieves_relevant_rules(
+    tmp_path: Path,
+) -> None:
+    blood_moon = {
+        "id": "blood-moon-id",
+        "name": "Blood Moon",
+        "type_line": "Enchantment",
+        "oracle_text": "Nonbasic lands are Mountains.",
+    }
+    urzas_saga = {
+        "id": "urzas-saga-id",
+        "name": "Urza's Saga",
+        "type_line": "Enchantment Land — Urza's Saga",
+        "oracle_text": (
+            "I — Add {C}. II — Add {C}. III — Search your library for an artifact."
+        ),
+    }
+    service = make_rules_service(tmp_path)
+    provider = FixtureCardProvider(rows=[blood_moon, urzas_saga])
+    try:
+        result = asyncio.run(
+            retrieve_evidence(
+                "What happens if Blood Moon enters while Urza's Saga is on the field?",
+                service,
+                provider,
+            )
+        )
+    finally:
+        asyncio.run(service.close())
+
+    rule_ids = {rule.rule_id for rule in result.rules}
+    assert {"305.7", "305.8", "613.1d", "715.2", "715.3", "715.4"} <= rule_ids
+    assert len(result.rules) <= MAX_RULE_RESULTS
+    assert [card.name for card in result.cards] == ["Blood Moon", "Urza's Saga"]
 
 
 def test_explicit_rule_result_count_is_bounded(tmp_path: Path) -> None:

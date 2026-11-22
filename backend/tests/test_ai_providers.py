@@ -92,6 +92,7 @@ def test_provider_http_adapters_extract_responses_and_usage() -> None:
         body = __import__("json").loads(request.content)
         assert body["model"] == "configured/model"
         assert body["messages"] == [{"role": "user", "content": "question context"}]
+        assert body["response_format"] == {"type": "json_object"}
         return httpx.Response(
             200,
             json={
@@ -107,7 +108,12 @@ def test_provider_http_adapters_extract_responses_and_usage() -> None:
             transport=httpx.MockTransport(openrouter_response),
         )
         try:
-            return await provider.generate(AIRequest((AIMessage("user", "question context"),)))
+            return await provider.generate(
+                AIRequest(
+                    (AIMessage("user", "question context"),),
+                    response_format="json_object",
+                )
+            )
         finally:
             await provider.close()
 
@@ -127,6 +133,7 @@ def test_gemini_adapter_maps_neutral_context_and_usage() -> None:
         payload = json.loads(request.content)
         assert payload["systemInstruction"]["parts"][0]["text"] == "grounding"
         assert payload["contents"] == [{"role": "user", "parts": [{"text": "question"}]}]
+        assert payload["generationConfig"]["responseMimeType"] == "application/json"
         return httpx.Response(
             200,
             json={
@@ -143,7 +150,10 @@ def test_gemini_adapter_maps_neutral_context_and_usage() -> None:
         )
         try:
             return await provider.generate(
-                AIRequest((AIMessage("system", "grounding"), AIMessage("user", "question")))
+                AIRequest(
+                    (AIMessage("system", "grounding"), AIMessage("user", "question")),
+                    response_format="json_object",
+                )
             )
         finally:
             await provider.close()
@@ -158,6 +168,7 @@ def test_gemini_adapter_maps_neutral_context_and_usage() -> None:
 def test_openai_adapter_uses_configured_prices_and_cached_token_usage() -> None:
     def response(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/chat/completions"
+        assert request.url.host == "openai.vocareum.com"
         assert request.headers["Authorization"] == "Bearer openai-secret"
         import json
 
@@ -168,6 +179,7 @@ def test_openai_adapter_uses_configured_prices_and_cached_token_usage() -> None:
             {"role": "user", "content": "question"},
         ]
         assert payload["max_completion_tokens"] == 1024
+        assert payload["response_format"] == {"type": "json_object"}
         return httpx.Response(
             200,
             json={
@@ -187,11 +199,15 @@ def test_openai_adapter_uses_configured_prices_and_cached_token_usage() -> None:
             input_price_per_million_usd=Decimal("0.15"),
             cached_input_price_per_million_usd=Decimal("0.075"),
             output_price_per_million_usd=Decimal("0.60"),
+            base_url="https://openai.vocareum.com/v1",
             transport=httpx.MockTransport(response),
         )
         try:
             return await provider.generate(
-                AIRequest((AIMessage("system", "grounding"), AIMessage("user", "question")))
+                AIRequest(
+                    (AIMessage("system", "grounding"), AIMessage("user", "question")),
+                    response_format="json_object",
+                )
             )
         finally:
             await provider.close()
@@ -277,6 +293,40 @@ def test_missing_openai_key_does_not_consume_or_lock_paid_budget() -> None:
             assert budget.unknown_cost is False
     finally:
         asyncio.run(service.close())
+        database.dispose()
+
+
+def test_paid_authentication_rejection_releases_budget_reservation() -> None:
+    database = make_database()
+    provider = FakeProvider("openai", "gpt-4o-mini", [AIAuthenticationError()])
+    settings = Settings(
+        _env_file=None,
+        llm_primary_provider="openai",
+        llm_primary_model="gpt-4o-mini",
+        llm_primary_model_cost="paid",
+        llm_openai_pricing_model="gpt-4o-mini",
+        llm_paid_enabled=True,
+        llm_monthly_cap_usd=Decimal("20"),
+        llm_paid_minimum_remaining_usd=Decimal("5"),
+    )
+    service = AIGenerationService(
+        settings,
+        database,
+        [ModelRoute("openai", "gpt-4o-mini", "paid", provider)],
+    )
+    try:
+        with pytest.raises(AIAuthenticationError):
+            asyncio.run(
+                service.generate(AIRequest((AIMessage("user", "question"),)))
+            )
+        month_start = datetime.now(timezone.utc).date().replace(day=1)
+        with database.session() as session:
+            budget = PaidBudgetRepository.monthly_budget(session, month_start)
+            assert budget is not None
+            assert budget.spent_usd == Decimal("0")
+            assert budget.reserved_usd == Decimal("0")
+            assert budget.unknown_cost is False
+    finally:
         database.dispose()
 
 
@@ -904,11 +954,13 @@ def test_settings_accept_openai_routes_with_explicit_matching_pricing_model() ->
         llm_primary_model="gpt-4o-mini",
         llm_primary_model_cost="paid",
         llm_openai_pricing_model="gpt-4o-mini",
+        llm_openai_base_url="https://openai.vocareum.com/v1/",
         llm_paid_enabled=True,
         llm_monthly_cap_usd=Decimal("20"),
         llm_paid_minimum_remaining_usd=Decimal("5"),
     )
     assert settings.llm_monthly_cap_usd == Decimal("20")
+    assert settings.llm_openai_base_url == "https://openai.vocareum.com/v1"
 
     with pytest.raises(ValueError, match="PRICING_MODEL"):
         Settings(
@@ -918,4 +970,7 @@ def test_settings_accept_openai_routes_with_explicit_matching_pricing_model() ->
             llm_primary_model_cost="paid",
             llm_openai_pricing_model="different-model",
         )
+
+    with pytest.raises(ValueError, match="HTTPS URL"):
+        Settings(_env_file=None, llm_openai_base_url="http://openai.vocareum.com/v1")
 

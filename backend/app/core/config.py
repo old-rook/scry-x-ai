@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     llm_openai_api_key: SecretStr | None = Field(
         default=None, validation_alias="LLM_OPENAI_API_KEY"
     )
+    llm_openai_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        validation_alias="LLM_OPENAI_BASE_URL",
+    )
     llm_openai_pricing_model: str | None = Field(
         default=None, validation_alias="LLM_OPENAI_PRICING_MODEL"
     )
@@ -105,6 +109,27 @@ class Settings(BaseSettings):
         normalized = value.strip()
         if not re.fullmatch(r"[A-Za-z0-9._:/-]+", normalized):
             raise ValueError("LLM model identifiers contain unsupported characters")
+        return normalized
+
+    @field_validator("llm_openai_base_url")
+    @classmethod
+    def validate_openai_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        parsed = urlparse(normalized)
+        if (
+            not normalized
+            or any(character.isspace() for character in normalized)
+            or parsed.scheme != "https"
+            or not parsed.netloc
+            or parsed.username
+            or parsed.password
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "LLM_OPENAI_BASE_URL must be an HTTPS URL without credentials, query, or fragment"
+            )
         return normalized
 
     @model_validator(mode="after")

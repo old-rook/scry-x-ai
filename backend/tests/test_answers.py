@@ -12,6 +12,7 @@ from app.db.database import Database
 from app.db.models import Conversation, Message
 from app.main import create_app
 from app.providers.ai import (
+    AIAuthenticationError,
     AIRequest,
     AIResult,
     AIUsage,
@@ -62,6 +63,13 @@ def build_rules_document() -> bytes:
                 else:
                     body = f"Sample procedure for section {rule_section}."
                 rows.append(f"{rule_section}.{number}. {body}")
+    rows.extend(
+        [
+            "702.4. Double Strike",
+            "702.4a Double strike is a static ability that modifies the rules for the combat damage step.",
+            "702.4b A creature with double strike assigns combat damage in each combat damage step.",
+        ]
+    )
     rows.append("601.2f. A spell's targets are chosen as it is cast, and each target must be legal.")
     return "\n".join(rows).encode("utf-8")
 
@@ -211,6 +219,96 @@ def test_answer_api_returns_grounded_rules_and_card_evidence(tmp_path: Path) -> 
     assert cards.search_calls == 1
     assert cards.detail_calls == 1
     assert adapter.calls == 1
+    assert adapter.last_request is not None
+    assert adapter.last_request.response_format == "json_object"
+
+
+def test_answer_api_handles_rules_question_without_card_evidence(tmp_path: Path) -> None:
+    output = json.dumps(
+        {
+            "verdict": "yes",
+            "explanation": "Double strike changes when a creature assigns combat damage.",
+            "rule_refs": ["rule:702.4a", "rule:702.4b"],
+            "card_refs": [],
+            "additional_considerations": [],
+        }
+    )
+    client, adapter, cards, audit_db, _ = make_client(tmp_path, output)
+    try:
+        response = client.post(
+            "/api/v1/answers",
+            json={"question": "What is double strike?"},
+        )
+    finally:
+        close_client(client, audit_db)
+
+    assert response.status_code == 200
+    answer = response.json()
+    assert answer["verdict"] == "yes"
+    assert {rule["section"] for rule in answer["comprehensive_rules"]} == {
+        "702.4a",
+        "702.4b",
+    }
+    assert answer["card_rulings"] == []
+    assert cards.search_calls == 0
+    assert adapter.calls == 1
+
+
+def test_answer_api_retrieves_both_cards_in_saga_interaction_question(
+    tmp_path: Path,
+) -> None:
+    blood_moon = CardDetail(
+        id="blood-moon-id",
+        name="Blood Moon",
+        scryfall_uri="https://scryfall.com/card/lea/156/blood-moon",
+        type_line="Enchantment",
+        oracle_text="Nonbasic lands are Mountains.",
+    )
+    urzas_saga = CardDetail(
+        id="urzas-saga-id",
+        name="Urza's Saga",
+        scryfall_uri="https://scryfall.com/card/mh2/259/urzas-saga",
+        type_line="Enchantment Land — Urza's Saga",
+        oracle_text="I: This Saga gains an ability. II: This Saga creates a Construct token. III: Search for an artifact.",
+    )
+    output = json.dumps(
+        {
+            "verdict": "depends",
+            "explanation": "The retrieved Oracle text supports analyzing these cards.",
+            "rule_refs": [],
+            "card_refs": ["card:0:oracle", "card:1:oracle"],
+            "additional_considerations": [],
+        }
+    )
+    card_provider = FixtureCardProvider(cards=[blood_moon, urzas_saga])
+    client, adapter, cards, audit_db, _ = make_client(
+        tmp_path,
+        output,
+        card_provider=card_provider,
+    )
+    try:
+        response = client.post(
+            "/api/v1/answers",
+            json={
+                "question": (
+                    "What happens if Blood Moon enters while Urza's Saga is on the field?"
+                )
+            },
+        )
+    finally:
+        close_client(client, audit_db)
+
+    assert response.status_code == 200
+    answer = response.json()
+    assert answer["evidence_status"] != "insufficient"
+    assert answer["model"] == MODEL
+    assert [source["source_reference"] for source in answer["card_rulings"]] == [
+        "Blood Moon",
+        "Urza's Saga",
+    ]
+    assert cards.search_calls == 2
+    assert cards.detail_calls == 2
+    assert adapter.calls == 1
 
 
 def test_answer_api_allows_valid_scryfall_ruling_citation(tmp_path: Path) -> None:
@@ -298,10 +396,10 @@ def test_invalid_or_hallucinated_model_output_fails_closed(
     assert response.status_code == 200
     answer = response.json()
     assert answer["evidence_status"] == "insufficient"
-    assert answer["model"] == "not_used"
-    assert answer["comprehensive_rules"] == []
-    assert answer["card_rulings"] == []
-    assert answer["explanation"].startswith("I can’t verify")
+    assert answer["model"] == MODEL
+    assert answer["comprehensive_rules"]
+    assert answer["card_rulings"]
+    assert answer["explanation"].startswith("I couldn’t validate")
     assert adapter.calls == 1
 
 
@@ -358,6 +456,25 @@ def test_ai_provider_failure_returns_safe_status(tmp_path: Path) -> None:
     assert response.status_code == 504
     assert "timed out" in response.text
     assert MODEL not in response.text
+    assert adapter.calls == 1
+
+
+def test_ai_authentication_failure_identifies_credential_problem(tmp_path: Path) -> None:
+    client, adapter, _, audit_db, _ = make_client(
+        tmp_path,
+        ai_error=AIAuthenticationError(),
+    )
+    try:
+        response = client.post(
+            "/api/v1/answers",
+            json={"question": "Can Lightning Bolt target under CR 601.2f?"},
+        )
+    finally:
+        close_client(client, audit_db)
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "ai_authentication_failed"
+    assert "credentials or model permissions" in response.json()["detail"]["message"]
     assert adapter.calls == 1
 
 
