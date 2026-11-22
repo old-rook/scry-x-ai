@@ -77,9 +77,11 @@ Possible fields:
 - `database.status`
 - `scryfall.status`
 - `rules.status`
-- `rules.version`
-- `rules.last_verified_at`
+- `rules.latest_known_official`
+- `rules.latest_verified_local`
+- `rules.refresh_in_progress`
 - `ai.status`
+- `ai.providers[]` (non-secret provider/model identifiers and availability)
 
 ### 4.2 Card Lookup
 

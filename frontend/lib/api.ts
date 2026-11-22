@@ -2,8 +2,8 @@ export interface HealthResponse {
   status: "ok" | "degraded" | "unavailable";
   database: DependencyStatus;
   scryfall: DependencyStatus;
-  rules: DependencyStatus;
-  ai: DependencyStatus;
+  rules: RulesStatus;
+  ai: AIStatus;
 }
 
 export type DependencyState =
@@ -15,6 +15,29 @@ export type DependencyState =
 
 export interface DependencyStatus {
   status: DependencyState;
+}
+
+export interface RulesVersionSummary {
+  version: string;
+  publication_date: string | null;
+  discovered_at: string | null;
+  verified_at: string | null;
+}
+
+export interface RulesStatus extends DependencyStatus {
+  latest_known_official: RulesVersionSummary | null;
+  latest_verified_local: RulesVersionSummary | null;
+  refresh_in_progress: boolean;
+}
+
+export interface AIProviderStatus {
+  provider: string;
+  model: string;
+  availability: "configured" | "unavailable" | "disabled";
+}
+
+export interface AIStatus extends DependencyStatus {
+  providers: AIProviderStatus[];
 }
 
 export interface CardRuling {

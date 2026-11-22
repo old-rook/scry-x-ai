@@ -13,6 +13,7 @@ from app.db.base import Base
 from app.db.database import Database
 from app.db.models import AIPaidMonthlyBudget, AIPaidBudgetReservation, ProviderAudit
 from app.main import create_app
+from app.providers.scryfall import ScryfallProvider
 from app.providers.ai import (
     AIAuditPersistenceError,
     AIBudgetExceededError,
@@ -715,6 +716,11 @@ def test_health_summary_redacts_credentials(tmp_path: Path) -> None:
     )
     app = create_app(
         Settings(rules_refresh_mode="external"),
+        card_provider=ScryfallProvider(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json={"object": "catalog"}, request=request)
+            )
+        ),
         rules_service=offline_rules_service(tmp_path),
         ai_generation_service=service,
     )

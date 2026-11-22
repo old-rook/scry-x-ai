@@ -1,3 +1,5 @@
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,6 +19,7 @@ from app.db.base import Base
 from app.db.database import Database
 from app.db.models import Conversation, Message, User
 from app.main import create_app
+from app.providers.scryfall import ScryfallProvider
 from app.repositories.conversations import ConversationRepository
 from app.repositories.messages import MessageRepository
 from app.repositories.users import UserRepository
@@ -24,9 +27,39 @@ from app.rules.service import RulesService
 
 
 def offline_rules_service(path: Path) -> RulesService:
+    path.mkdir(parents=True, exist_ok=True)
+    verified_at = datetime.now(timezone.utc).isoformat()
+    (path / "active.json").write_text(
+        json.dumps(
+            {
+                "format_version": 1,
+                "status": "verified",
+                "active": {
+                    "version": "20261106",
+                    "publication_date": "2026-11-06",
+                    "verified_at": verified_at,
+                },
+                "latest_known_official": {
+                    "version": "20261106",
+                    "publication_date": "2026-11-06",
+                    "discovered_at": verified_at,
+                },
+                "last_verified_at": verified_at,
+            }
+        ),
+        encoding="utf-8",
+    )
     return RulesService(
         path,
         transport=httpx.MockTransport(lambda request: httpx.Response(503, request=request)),
+    )
+
+
+def offline_card_provider() -> ScryfallProvider:
+    return ScryfallProvider(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"object": "catalog"}, request=request)
+        )
     )
 
 
@@ -69,7 +102,11 @@ def test_health_endpoint_reports_database_failure_without_details(monkeypatch, t
     monkeypatch.setattr(Database, "health_status", lambda self: "unavailable")
 
     with TestClient(
-        create_app(Settings(rules_refresh_mode="external"), rules_service=offline_rules_service(tmp_path))
+        create_app(
+            Settings(rules_refresh_mode="external"),
+            card_provider=offline_card_provider(),
+            rules_service=offline_rules_service(tmp_path / "rules"),
+        )
     ) as client:
         response = client.get("/api/v1/health")
 
@@ -83,7 +120,11 @@ def test_health_endpoint_reports_configured_database(tmp_path: Path) -> None:
     settings = Settings(database_url="sqlite+pysqlite:///:memory:")
 
     with TestClient(
-        create_app(settings, rules_service=offline_rules_service(tmp_path))
+        create_app(
+            settings,
+            card_provider=offline_card_provider(),
+            rules_service=offline_rules_service(tmp_path / "rules"),
+        )
     ) as client:
         response = client.get("/api/v1/health")
 

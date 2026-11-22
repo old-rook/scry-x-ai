@@ -3,6 +3,13 @@
     "fields": ["status", "database", "scryfall", "rules", "ai"],
     "status": ["ok", "degraded", "unavailable"]
   },
+  "RulesStatus": {
+    "fields": ["status", "latest_known_official", "latest_verified_local", "refresh_in_progress"],
+    "status": ["ok", "degraded", "unavailable", "not_configured", "stale"]
+  },
+  "RulesVersionSummary": {
+    "fields": ["version", "publication_date", "discovered_at", "verified_at"]
+  },
   "AIStatus": {
     "fields": ["status", "providers"],
     "status": ["ok", "degraded", "unavailable", "not_configured", "stale"]

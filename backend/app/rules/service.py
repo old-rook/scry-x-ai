@@ -107,6 +107,99 @@ class RulesService:
             "refresh_in_progress": self._refreshing,
         }
 
+    def health_summary(self) -> dict:
+        state = self.status()
+        active = state["latest_verified_local"]
+        official = state["latest_known_official"]
+        last_verified_at = state["last_verified_at"]
+        active_summary = self._version_summary(
+            active,
+            timestamp_field="verified_at",
+        )
+        active_timestamp = (
+            self._parse_timestamp(active.get("verified_at"))
+            if isinstance(active, dict)
+            else None
+        )
+        state_timestamp = self._parse_timestamp(last_verified_at)
+
+        if (
+            active_summary is None
+            or active_timestamp is None
+            or active_timestamp != state_timestamp
+        ):
+            active = None
+            active_summary = None
+            health_status = "unavailable"
+        elif state["status"] in {"failed", "verification_incomplete"}:
+            health_status = "degraded"
+        elif not self._is_fresh(last_verified_at):
+            health_status = "stale"
+        elif (
+            isinstance(official, dict)
+            and official.get("version")
+            and active.get("version")
+            and official["version"] != active["version"]
+        ):
+            health_status = "stale"
+        else:
+            health_status = "ok"
+
+        return {
+            "status": health_status,
+            "latest_known_official": self._version_summary(
+                official,
+                timestamp_field="discovered_at",
+            ),
+            "latest_verified_local": active_summary,
+            "refresh_in_progress": state["refresh_in_progress"],
+        }
+
+    @staticmethod
+    def _version_summary(value: object, *, timestamp_field: str) -> dict | None:
+        if not isinstance(value, dict):
+            return None
+        version = value.get("version")
+        if not isinstance(version, str) or not version.strip():
+            return None
+
+        publication_date = value.get("publication_date")
+        if isinstance(publication_date, str):
+            try:
+                publication_date = date.fromisoformat(publication_date).isoformat()
+            except ValueError:
+                publication_date = None
+        else:
+            publication_date = None
+
+        timestamp = value.get(timestamp_field)
+        parsed_timestamp = RulesService._parse_timestamp(timestamp)
+        timestamp = parsed_timestamp.isoformat() if parsed_timestamp is not None else None
+
+        return {
+            "version": version,
+            "publication_date": publication_date,
+            "discovered_at": timestamp if timestamp_field == "discovered_at" else None,
+            "verified_at": timestamp if timestamp_field == "verified_at" else None,
+        }
+
+    @staticmethod
+    def _parse_timestamp(value: object) -> datetime | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            timestamp = datetime.fromisoformat(value)
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+        return timestamp.astimezone(timezone.utc)
+
+    @staticmethod
+    def _is_fresh(verified_at: object) -> bool:
+        timestamp = RulesService._parse_timestamp(verified_at)
+        return timestamp is not None and _utcnow() - timestamp <= timedelta(hours=24)
+
     async def start_background_refresh(self, mode: str, interval_hours: int) -> None:
         if self._background_task is None or self._background_task.done():
             self._background_task = asyncio.create_task(

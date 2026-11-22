@@ -75,7 +75,7 @@ The app budget is **not an absolute billing guarantee**: provider cost is report
 
 Authentication uses JWT bearer tokens signed by `JWT_SIGNING_KEY`. Access tokens expire after 15 minutes. Set the signing key only through an environment variable or secret manager; never commit it or expose it in API responses/logs. Guest state remains browser-local and is not uploaded automatically.
 
-Card lookup uses the public Scryfall API and requires no credentials. Provider timeouts, rate limits, network failures, and invalid upstream responses return safe error codes without including upstream response bodies. The health endpoint checks Scryfall availability and reports configured AI provider/model identifiers and availability only; it never includes API keys.
+Card lookup uses the public Scryfall API and requires no credentials. Provider timeouts, rate limits, network failures, and invalid upstream responses return safe error codes without including upstream response bodies. The health endpoint aggregates database, Scryfall, Comprehensive Rules, and AI status. It distinguishes the latest known official rules version from the latest verified local version and reports configured AI provider/model identifiers and availability only; it never includes API keys, source URLs, or raw provider errors.
 
 ## Limitations
 
