@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 from fastapi import HTTPException, Request, status
@@ -26,7 +26,7 @@ class Database:
         )
 
     @contextmanager
-    def session(self) -> Iterator[Session]:
+    def session(self) -> Generator[Session, None, None]:
         if self._session_factory is None:
             raise RuntimeError("Database is not configured")
         with self._session_factory() as session:
@@ -55,7 +55,7 @@ def get_database(request: Request) -> Database:
     return request.app.state.database
 
 
-def get_session(request: Request) -> Iterator[Session]:
+def get_session(request: Request) -> Generator[Session, None, None]:
     database: Database = request.app.state.database
     if database.engine is None:
         raise HTTPException(
