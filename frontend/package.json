@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "test": "npm run build",
+    "test": "node --test tests/contracts.test.mjs && npm run build",
     "start": "next start",
     "lint": "next lint"
   },
