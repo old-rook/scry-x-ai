@@ -36,11 +36,14 @@
     "role": ["user", "assistant"]
   },
   "AnswerRequest": {
-    "fields": ["conversation_id", "question", "card_names", "guest", "conversation_context"]
+    "fields": ["conversation_id", "question", "card_names", "card_clarification", "guest", "conversation_context"]
   },
   "AnswerResponse": {
-    "fields": ["answer_id", "conversation_id", "verdict", "explanation", "comprehensive_rules", "card_rulings", "additional_considerations", "model", "evidence_status", "disclaimer"],
+    "fields": ["answer_id", "conversation_id", "verdict", "explanation", "comprehensive_rules", "card_rulings", "cards", "clarification", "additional_considerations", "model", "evidence_status", "disclaimer"],
     "evidence_status": ["complete", "partial", "insufficient"]
+  },
+  "CardClarification": {
+    "fields": ["question", "clarification", "card_names", "suggestions"]
   },
   "AnswerSource": {
     "fields": ["id", "source_type", "source_reference", "source_url", "evidence_text", "retrieved_at"],

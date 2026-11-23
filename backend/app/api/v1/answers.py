@@ -14,6 +14,7 @@ async def create_answer(body: AnswerRequest, request: Request) -> AnswerResponse
         rules_service=request.app.state.rules_service,
         card_provider=request.app.state.card_provider,
         ai_generation_service=request.app.state.ai_generation_service,
+        card_catalog=request.app.state.card_catalog,
     )
     try:
         return await service.answer(body)
@@ -23,7 +24,11 @@ async def create_answer(body: AnswerRequest, request: Request) -> AnswerResponse
             detail={"code": error.code, "message": error.message},
         ) from None
     except CardProviderError as error:
-        if error.status_code == 429:
+        if error.code == "card_catalog_unavailable":
+            status_code, code, message = (
+                503, "card_catalog_unavailable", "Card name catalog is temporarily unavailable"
+            )
+        elif error.status_code == 429:
             status_code, code, message = (
                 503,
                 "card_provider_rate_limited",

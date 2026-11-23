@@ -24,6 +24,16 @@ class ComprehensiveRuleSource(StrictBaseModel):
     ruleset_version: str = Field(min_length=1)
 
 
+class AnswerCard(StrictBaseModel):
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    scryfall_uri: HttpUrl | None = None
+    mana_cost: str | None = None
+    type_line: str | None = None
+    oracle_text: str | None = None
+    image_urls: dict[str, HttpUrl] = Field(default_factory=dict)
+
+
 class ConversationTurn(StrictBaseModel):
     role: Literal["user", "assistant"]
     content: str = Field(min_length=1, max_length=1200)
@@ -40,6 +50,7 @@ class AnswerRequest(StrictBaseModel):
     conversation_id: str | None = Field(default=None, max_length=100)
     question: str = Field(min_length=1, max_length=5000)
     card_names: list[str] = Field(default_factory=list, max_length=20)
+    card_clarification: str | None = Field(default=None, max_length=3600)
     guest: StrictBool = True
     conversation_context: list[ConversationTurn] = Field(default_factory=list, max_length=6)
 
@@ -54,9 +65,18 @@ class AnswerRequest(StrictBaseModel):
     def validate_context_budget(self) -> "AnswerRequest":
         if sum(len(turn.content) for turn in self.conversation_context) > 3600:
             raise ValueError("conversation context exceeds the allowed size")
-        if any(not name.strip() or len(name) > 100 for name in self.card_names):
-            raise ValueError("card names must be non-empty and at most 100 characters")
+        if any(not name.strip() or len(name) > 200 for name in self.card_names):
+            raise ValueError("card names must be non-empty and at most 200 characters")
+        if self.card_clarification is not None and not self.card_clarification.strip():
+            raise ValueError("card clarification must not be blank")
         return self
+
+
+class CardClarification(StrictBaseModel):
+    question: str = Field(min_length=1, max_length=5000)
+    clarification: str | None = Field(default=None, max_length=3600)
+    card_names: list[str] = Field(default_factory=list, max_length=20)
+    suggestions: list[str] = Field(default_factory=list, max_length=5)
 
 
 class AnswerResponse(StrictBaseModel):
@@ -66,6 +86,8 @@ class AnswerResponse(StrictBaseModel):
     explanation: str = Field(min_length=1)
     comprehensive_rules: list[ComprehensiveRuleSource] = Field(default_factory=list)
     card_rulings: list[AnswerSource] = Field(default_factory=list)
+    cards: list[AnswerCard] = Field(default_factory=list)
+    clarification: CardClarification | None = None
     additional_considerations: list[str] = Field(default_factory=list)
     model: str = Field(min_length=1)
     evidence_status: Literal["complete", "partial", "insufficient"]

@@ -1,4 +1,4 @@
-import type { AnswerResponse, ConversationTurn } from "./api";
+import type { AnswerRequest, AnswerResponse, ConversationTurn } from "./api";
 
 export interface GuestUserMessage {
   id: string;
@@ -51,3 +51,4 @@ export function recordGuestAnswer(
   messageId?: () => string,
 ): GuestHistory;
 export function guestConversationContext(conversation?: GuestConversation): ConversationTurn[];
+export function guestAnswerRequest(conversation: GuestConversation, question: string): AnswerRequest;

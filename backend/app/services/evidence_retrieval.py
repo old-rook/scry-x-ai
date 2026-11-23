@@ -10,7 +10,7 @@ from app.rules.service import RulesService
 from app.schemas.cards import CardDetail, CardRuling, CardSearchRequest
 
 
-MAX_QUESTION_LENGTH = 2_000
+MAX_QUESTION_LENGTH = 8_601
 MAX_RULE_RESULTS = 8
 MAX_RULE_TEXT_LENGTH = 1_200
 MAX_TOTAL_RULE_TEXT_LENGTH = 6_000
@@ -32,6 +32,17 @@ _LAND_TYPE_SETTING = re.compile(
     r"(?:a\s+)?(?:plains?|islands?|swamps?|mountains?|forests?)\b",
     re.IGNORECASE,
 )
+_BECOMES_BASIC_LAND = re.compile(
+    r"\b(?:is|becomes)\s+(?:a\s+)?(?:colorless\s+)?"
+    r"(?:plains|island|swamp|mountain|forest)\s+land\b",
+    re.IGNORECASE,
+)
+_DEVOTION = re.compile(r"\bdevotion\s+to\b", re.IGNORECASE)
+_MANA_ABILITY = re.compile(r"\bmana\s+abil{1,2}it(?:y|ies)\b", re.IGNORECASE)
+_COUNTER_TARGET_SPELL = re.compile(
+    r"\bcounter\s+target\s+[^.;\n]{0,80}\bspell\b", re.IGNORECASE
+)
+_ABILITY_REMOVAL = re.compile(r"\blos(?:e|es)\s+all\s+(?:other\s+)?abilities\b", re.IGNORECASE)
 _QUOTED_NAME = re.compile(r"""["“]([^"”\n]{1,100})["”]""")
 _TITLE_PHRASE = re.compile(
     r"\b[A-Z][A-Za-z'’\-]*(?:\s+(?:(?:of|the|and|to|for|in|on|at|with|from|into|by|a|an)\s+)?"
@@ -70,12 +81,15 @@ class RuleEvidence:
 @dataclass(frozen=True)
 class CardEvidence:
     evidence_id: str
+    card_id: str
     name: str
     type_line: str | None
     oracle_text: str | None
     scryfall_uri: str | None = None
     rulings: tuple[CardRuling, ...] = ()
     source: str = "scryfall"
+    mana_cost: str | None = None
+    image_urls: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -120,6 +134,8 @@ def extract_card_name_candidates(question: str) -> list[str]:
             break
     for match in _SINGLE_WORD_CARD_CUE.finditer(bounded_question):
         candidate = match.group(1)
+        if candidate.casefold() in _STOPWORDS:
+            continue
         if any(candidate.casefold() in item.casefold().split() for item in candidates):
             continue
         add(candidate, quoted=True)
@@ -132,6 +148,7 @@ async def retrieve_evidence(
     question: str,
     rules_service: RulesService,
     card_provider: CardProvider,
+    card_names: tuple[str, ...] | None = None,
 ) -> EvidenceBundle:
     """Retrieve bounded verified evidence; this function never stores the question."""
     if not isinstance(question, str):
@@ -143,7 +160,7 @@ async def retrieve_evidence(
         metadata = None
     else:
         verified_rules, metadata = snapshot
-    cards = await _retrieve_cards(bounded_question, card_provider)
+    cards = await _retrieve_cards(bounded_question, card_provider, card_names)
     rules = _retrieve_rules(bounded_question, verified_rules, cards)
     return EvidenceBundle(
         rules=tuple(rules),
@@ -183,6 +200,15 @@ def _retrieve_rules(
                 return _bound_rule_text(selected)
     if added_card_rule:
         return _bound_rule_text(selected)
+
+    if _MANA_ABILITY.search(question):
+        for rule_id in ("605.3b", "605.4a"):
+            rule = by_id.get(rule_id)
+            if rule is not None and rule_id not in selected_ids:
+                selected.append(rule)
+                selected_ids.add(rule_id)
+                if len(selected) >= MAX_RULE_RESULTS:
+                    return _bound_rule_text(selected)
 
     query_terms = _normalized_terms(question)
     rule_terms = {
@@ -305,15 +331,25 @@ def _retrieve_rules(
 
 
 def _card_rule_hints(cards: list[CardEvidence]) -> tuple[str, ...]:
-    if not any(_LAND_TYPE_SETTING.search(card.oracle_text or "") for card in cards):
-        return ()
-
-    rule_ids = ["305.7", "305.8", "613.1d"]
-    if any(
-        card.type_line and "saga" in _normalized_terms(card.type_line)
-        for card in cards
-    ):
-        rule_ids.extend(("715.2", "715.3", "715.4"))
+    rule_ids: list[str] = []
+    if any(_BECOMES_BASIC_LAND.search(card.oracle_text or "") for card in cards):
+        rule_ids.extend(("305.7", "613.1d", "613.8a", "613.8b", "613.7", "613.6"))
+        if any(_DEVOTION.search(card.oracle_text or "") for card in cards):
+            rule_ids.extend(("700.5", "700.5a"))
+    if any(_ABILITY_REMOVAL.search(card.oracle_text or "") for card in cards):
+        rule_ids.extend(("613.6", "613.1d", "613.1f", "613.1g", "613.4b", "613.5"))
+    if any(_LAND_TYPE_SETTING.search(card.oracle_text or "") for card in cards):
+        rule_ids.extend(("305.7", "305.8", "613.1d"))
+        if any(
+            card.type_line and "saga" in _normalized_terms(card.type_line)
+            for card in cards
+        ):
+            rule_ids.extend(("715.2", "715.3", "715.4"))
+    if any(_COUNTER_TARGET_SPELL.search(card.oracle_text or "") for card in cards):
+        rule_ids.extend((
+            "112.1", "115.1a", "117.1a", "117.3c", "117.3d", "117.4",
+            "701.6a", "601.2c",
+        ))
     return tuple(rule_ids)
 
 
@@ -351,19 +387,47 @@ def _bound_rule_text(rules: list[dict[str, str]]) -> list[RuleEvidence]:
     return evidence
 
 
-async def _retrieve_cards(question: str, card_provider: CardProvider) -> list[CardEvidence]:
+class CardResolutionError(Exception):
+    def __init__(self, name: str, suggestions: tuple[str, ...] = ()) -> None:
+        self.name = name
+        self.suggestions = suggestions
+        super().__init__(name)
+
+
+async def _retrieve_cards(
+    question: str, card_provider: CardProvider, names: tuple[str, ...] | None = None
+) -> list[CardEvidence]:
     evidence: list[CardEvidence] = []
-    for candidate in extract_card_name_candidates(question):
-        request = CardSearchRequest(q=f'!"{candidate}"', limit=5)
+    for candidate in names if names is not None else extract_card_name_candidates(question):
+        escaped = candidate.replace("\\", "\\\\").replace('"', '\\"')
+        request = CardSearchRequest(q=f'!"{escaped}"', limit=5)
         response = await card_provider.search_cards(request)
-        match = next(
-            (card for card in response.cards if card.name.casefold() == candidate.casefold()),
-            None,
-        )
+        matches = [
+            card for card in response.cards
+            if candidate.casefold() in {
+                part.casefold() for part in [card.name, *card.name.split(" // ")]
+            }
+        ]
+        exact = [card for card in matches if card.name.casefold() == candidate.casefold()]
+        candidates = exact if exact else matches
+        distinct_names = tuple(dict.fromkeys(card.name for card in candidates))
+        if names is not None and (
+            len(distinct_names) > 1
+            or len({card.id for card in exact}) > 1
+            or (not exact and response.total > len(response.cards))
+        ):
+            raise CardResolutionError(candidate, distinct_names[:5])
+        match = candidates[0] if candidates else None
         if match is None:
+            if names is not None:
+                raise CardResolutionError(candidate)
             continue
         detail = await card_provider.get_card(match.id)
-        if detail.id != match.id or detail.name.casefold() != candidate.casefold():
+        if detail.id != match.id or detail.name.casefold() != match.name.casefold():
+            if names is not None:
+                raise CardResolutionError(candidate)
+            continue
+        if any(card.card_id == detail.id for card in evidence):
             continue
         evidence.append(_card_evidence(detail, len(evidence)))
     return evidence
@@ -372,10 +436,15 @@ async def _retrieve_cards(question: str, card_provider: CardProvider) -> list[Ca
 def _card_evidence(card: CardDetail, index: int) -> CardEvidence:
     return CardEvidence(
         evidence_id=f"card:{index}:oracle",
-        name=card.name[:100],
+        name=card.name[:200],
         type_line=card.type_line[:300] if card.type_line else None,
-        oracle_text=card.oracle_text[:MAX_CARD_TEXT_LENGTH] if card.oracle_text else None,
+        oracle_text=(
+            card.oracle_text[:MAX_CARD_TEXT_LENGTH] if card.oracle_text is not None else None
+        ),
         scryfall_uri=str(card.scryfall_uri) if card.scryfall_uri else None,
+        card_id=card.id,
+        mana_cost=card.mana_cost,
+        image_urls=tuple((key, str(value)) for key, value in card.image_urls.items()),
         rulings=tuple(
             ruling.model_copy(update={"comment": ruling.comment[:MAX_RULING_TEXT_LENGTH]})
             for ruling in card.rulings[:MAX_CARD_RULINGS]

@@ -10,6 +10,7 @@ import {
   createGuestConversation,
   clearGuestHistory,
   guestConversationContext,
+  guestAnswerRequest,
   readGuestHistory,
   recordGuestAnswer,
   writeGuestHistory,
@@ -41,6 +42,43 @@ const sampleAnswer = {
   evidence_status: "partial",
   disclaimer: "Unofficial research only.",
 };
+
+test("answer API accepts a long Oracle card name without truncation", async () => {
+  const name = `${"A".repeat(70)} ${"B".repeat(70)}`;
+  const answer = {
+    ...sampleAnswer,
+    cards: [{ id: "long-card", name, image_urls: {} }],
+  };
+  const result = await submitAnswerRequest(
+    { question: name }, "http://api",
+    async () => ({ ok: true, json: async () => answer }),
+  );
+  assert.equal(result.cards[0].name, name);
+});
+
+test("clarification replies resume the original question across stored turns", () => {
+  const pending = {
+    ...sampleAnswer,
+    verdict: "unclear",
+    evidence_status: "insufficient",
+    clarification: {
+      question: "Can lightning blot target a creature?",
+      clarification: "I meant a red spell.",
+      suggestions: ["Lightning Bolt"],
+    },
+  };
+  const history = recordGuestAnswer(
+    { version: 1, currentId: "guest-1", conversations: [createGuestConversation("guest-1")] },
+    "guest-1",
+    "Can lightning blot target a creature?",
+    pending,
+    "2026-11-22T00:00:00Z",
+    () => "id",
+  );
+  const request = guestAnswerRequest(history.conversations[0], "Lightning Bolt");
+  assert.equal(request.question, pending.clarification.question);
+  assert.equal(request.card_clarification, "I meant a red spell.\nLightning Bolt");
+});
 
 test("frontend API contract exposes the Phase 1 schemas", async () => {
   const source = await readFile(new URL("../lib/api.ts", import.meta.url), "utf8");
@@ -176,6 +214,39 @@ test("answer API rejects malformed and structurally invalid successful responses
         error.message === "The backend returned an unreadable answer.",
     );
   }
+});
+
+test("retrieved cards survive guest history and reject unsafe image URLs", async () => {
+  const card = {
+    id: "blood-moon",
+    name: "Blood Moon",
+    scryfall_uri: "https://scryfall.com/card/blood-moon",
+    type_line: "Enchantment",
+    oracle_text: "Nonbasic lands are Mountains.",
+    image_urls: { normal: "https://cards.scryfall.io/blood-moon.jpg" },
+  };
+  const answer = { ...sampleAnswer, cards: [card] };
+  const received = await submitAnswerRequest({}, "http://api", async () => ({
+    ok: true, json: async () => answer,
+  }));
+  let history = { version: 1, currentId: "guest-1", conversations: [createGuestConversation("guest-1")] };
+  history = recordGuestAnswer(history, "guest-1", "Question", received, "2026-11-23T00:00:00Z", () => "id");
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+  };
+  assert.equal(writeGuestHistory(storage, history), true);
+  assert.deepEqual(readGuestHistory(storage, new Date("2026-11-23T00:00:00Z")), history);
+  assert.equal(history.conversations[0].messages[1].answer.cards[0].image_urls.normal, card.image_urls.normal);
+  await assert.rejects(
+    submitAnswerRequest({}, "http://api", async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ...answer, cards: [{ ...card, image_urls: { normal: "javascript:alert(1)" } }] }),
+    })),
+    (error) => error instanceof ApiError && error.message === "The backend returned an unreadable answer.",
+  );
 });
 
 test("guest history is versioned, bounded, expires after 30 days, and survives storage round trip", () => {

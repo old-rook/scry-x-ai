@@ -94,6 +94,16 @@ export interface ComprehensiveRuleSource {
   ruleset_version: string;
 }
 
+export interface AnswerCard {
+  id: string;
+  name: string;
+  scryfall_uri?: string | null;
+  mana_cost?: string | null;
+  type_line?: string | null;
+  oracle_text?: string | null;
+  image_urls: Record<string, string>;
+}
+
 export interface ConversationTurn {
   role: "user" | "assistant";
   content: string;
@@ -103,6 +113,7 @@ export interface AnswerRequest {
   conversation_id?: string | null;
   question: string;
   card_names?: string[];
+  card_clarification?: string | null;
   guest?: boolean;
   conversation_context?: ConversationTurn[];
 }
@@ -114,10 +125,19 @@ export interface AnswerResponse {
   explanation: string;
   comprehensive_rules: ComprehensiveRuleSource[];
   card_rulings: AnswerSource[];
+  cards?: AnswerCard[];
+  clarification?: CardClarification | null;
   additional_considerations: string[];
   model: string;
   evidence_status: "complete" | "partial" | "insufficient";
   disclaimer: string;
+}
+
+export interface CardClarification {
+  question: string;
+  clarification: string | null;
+  card_names?: string[];
+  suggestions: string[];
 }
 
 export interface ConversationCreateRequest {

@@ -17,6 +17,7 @@ from app.providers.errors import CardProviderError
 from app.providers.scryfall import ScryfallProvider
 from app.rules.service import RulesService
 from app.services.ai_generation import AIGenerationService, build_ai_generation_service
+from app.services.card_extraction import CardCatalog
 
 
 def create_app(
@@ -30,6 +31,7 @@ def create_app(
     card_provider = card_provider if card_provider is not None else ScryfallProvider()
     rules_service = rules_service or RulesService(settings.rules_storage_dir)
     ai_generation_service = ai_generation_service or build_ai_generation_service(settings, database)
+    card_catalog = CardCatalog(settings.card_catalog_path, card_provider)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -37,19 +39,23 @@ def create_app(
             settings.rules_refresh_mode,
             settings.rules_refresh_interval_hours,
         )
+        card_catalog.start_background_refresh()
         try:
             yield
         finally:
             try:
-                await rules_service.close()
+                await card_catalog.close()
             finally:
                 try:
-                    await card_provider.close()
+                    await rules_service.close()
                 finally:
                     try:
-                        await ai_generation_service.close()
+                        await card_provider.close()
                     finally:
-                        database.dispose()
+                        try:
+                            await ai_generation_service.close()
+                        finally:
+                            database.dispose()
 
     app = FastAPI(
         title=settings.app_name,
@@ -78,6 +84,7 @@ def create_app(
     app.state.database = database
     app.state.settings = settings
     app.state.card_provider = card_provider
+    app.state.card_catalog = card_catalog
     app.state.rules_service = rules_service
     app.state.ai_generation_service = ai_generation_service
     app.include_router(health_router, prefix=settings.api_v1_prefix)

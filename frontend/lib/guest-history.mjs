@@ -1,3 +1,5 @@
+import { isAnswerCard, isCardClarification } from "./answer-api.mjs";
+
 export const GUEST_HISTORY_KEY = "scry-x-ai.guest-history.v1";
 export const GUEST_HISTORY_VERSION = 1;
 export const MAX_GUEST_CONVERSATIONS = 5;
@@ -52,6 +54,9 @@ function isAnswer(value) {
     Array.isArray(value.card_rulings) &&
     value.card_rulings.length <= 40 &&
     value.card_rulings.every(isAnswerSource) &&
+    (value.cards === undefined ||
+      (Array.isArray(value.cards) && value.cards.length <= 3 && value.cards.every(isAnswerCard))) &&
+    (value.clarification == null || isCardClarification(value.clarification)) &&
     Array.isArray(value.additional_considerations) &&
     value.additional_considerations.length <= 5 &&
     value.additional_considerations.every((item) => boundedString(item, 2000)) &&
@@ -199,4 +204,25 @@ export function guestConversationContext(conversation) {
     size += turn.content.length;
   }
   return selected;
+}
+
+export function guestAnswerRequest(conversation, question) {
+  const last = conversation.messages[conversation.messages.length - 1];
+  const pending = last?.role === "assistant" ? last.answer.clarification : null;
+  const request = {
+    question,
+    guest: true,
+    conversation_id: conversation.id,
+    conversation_context: guestConversationContext(conversation),
+  };
+  if (pending) {
+    const clarification = [pending.clarification, question].filter(Boolean).join("\n");
+    if (clarification.length > 3600) {
+      throw new Error("Clarification is too long. Start a new chat and ask the full question again.");
+    }
+    request.question = pending.question;
+    request.card_clarification = clarification;
+    request.card_names = pending.card_names ?? [];
+  }
+  return request;
 }

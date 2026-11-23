@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     database_url: SecretStr | None = None
     jwt_signing_key: SecretStr | None = None
     rules_storage_dir: Path = Path(__file__).resolve().parents[2] / "data" / "rules"
+    card_catalog_path: Path = Path(__file__).resolve().parents[2] / "data" / "card-names.json"
     rules_refresh_mode: Literal["local", "external"] = "local"
     rules_refresh_interval_hours: int = Field(default=24, ge=1, le=24)
     access_token_lifetime_minutes: int = Field(default=15, ge=15, le=15)

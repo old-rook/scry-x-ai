@@ -11,7 +11,7 @@ import {
 import {
   createGuestConversation,
   clearGuestHistory,
-  guestConversationContext,
+  guestAnswerRequest,
   GuestHistory,
   MAX_QUESTION_LENGTH,
   readGuestHistory,
@@ -99,7 +99,7 @@ function EvidenceLinks({ answer }: { answer: AnswerResponse }) {
         </ul>
       ) : (
         <p className="mt-2 text-sm text-amber-200">
-          No rules or card evidence was retrieved for this answer.
+          No rule or card citations were returned for this answer.
         </p>
       )}
     </div>
@@ -110,7 +110,7 @@ function AnswerMessage({ answer }: { answer: AnswerResponse }) {
   const evidenceLabel = {
     complete: "Evidence retrieved",
     partial: "Partial evidence",
-    insufficient: "Insufficient evidence",
+    insufficient: answer.clarification ? "Clarification needed" : "Insufficient evidence",
   }[answer.evidence_status];
   return (
     <article className="rounded border border-slate-800 bg-slate-900/70 p-4">
@@ -128,13 +128,44 @@ function AnswerMessage({ answer }: { answer: AnswerResponse }) {
           {evidenceLabel}
         </span>
       </div>
-      {answer.evidence_status === "insufficient" && (
+      {answer.evidence_status === "insufficient" && !answer.clarification && (
         <p className="mt-3 border-l-2 border-amber-500 pl-3 text-sm font-medium text-amber-100">
           Insufficient evidence: this answer could not be verified from retrieved sources.
         </p>
       )}
       <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-200">{answer.explanation}</p>
-      <EvidenceLinks answer={answer} />
+      {(answer.cards?.length ?? 0) > 0 && (
+        <section className="mt-4 border-t border-slate-800 pt-3" aria-label="Retrieved cards">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Retrieved cards
+          </h4>
+          <div className="mt-2 grid gap-3 md:grid-cols-2">
+            {answer.cards?.map((card) => {
+              const images = card.image_urls.normal
+                ? [card.image_urls.normal]
+                : [card.image_urls.front, card.image_urls.back].filter((url): url is string => !!url);
+              return (
+                <article key={card.id} className="flex gap-3 border border-slate-800 bg-slate-950/50 p-3">
+                  {images.filter(safeHttpUrl).map((url, index) => (
+                    <img key={url} src={url} alt={`${card.name}${images.length > 1 ? ` face ${index + 1}` : ""}`} loading="lazy" className="h-auto w-24 self-start rounded" />
+                  ))}
+                  <div className="min-w-0 text-xs leading-5 text-slate-300">
+                    {card.scryfall_uri && safeHttpUrl(card.scryfall_uri) ? (
+                      <a href={card.scryfall_uri} target="_blank" rel="noreferrer" className="font-semibold text-sky-300 underline">{card.name}</a>
+                    ) : <span className="font-semibold text-slate-200">{card.name}</span>}
+                    {card.mana_cost && <p>{card.mana_cost}</p>}
+                    {card.type_line && <p className="text-slate-400">{card.type_line}</p>}
+                    {card.oracle_text != null && (
+                      <p className="mt-1 whitespace-pre-wrap">{card.oracle_text || "No Oracle text."}</p>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
+      {!answer.clarification && <EvidenceLinks answer={answer} />}
       {answer.additional_considerations.length > 0 && (
         <div className="mt-4">
           <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -150,9 +181,9 @@ function AnswerMessage({ answer }: { answer: AnswerResponse }) {
         <span>·</span>
         <span>{answer.disclaimer}</span>
       </div>
-      <p className="mt-2 text-[11px] text-slate-500">
+      {!answer.clarification && <p className="mt-2 text-[11px] text-slate-500">
         AI interpretation is separate from the retrieved source text above. Check the linked official rules.
-      </p>
+      </p>}
     </article>
   );
 }
@@ -206,6 +237,8 @@ export default function HomePage() {
     () => history.conversations.find((conversation) => conversation.id === history.currentId),
     [history],
   );
+  const lastMessage = currentConversation?.messages[currentConversation.messages.length - 1];
+  const awaitingClarification = lastMessage?.role === "assistant" && !!lastMessage.answer.clarification;
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -276,12 +309,7 @@ export default function HomePage() {
     setPendingQuestion(trimmed);
     setQuestion("");
     try {
-      const request: AnswerRequest = {
-        question: trimmed,
-        guest: true,
-        conversation_id: currentConversation.id,
-        conversation_context: guestConversationContext(currentConversation),
-      };
+      const request: AnswerRequest = guestAnswerRequest(currentConversation, trimmed);
       const answer = await submitAnswer(request);
       const next = recordGuestAnswer(history, currentConversation.id, trimmed, answer);
       save(next);
@@ -289,6 +317,8 @@ export default function HomePage() {
       setQuestion(trimmed);
       setError(caught instanceof ApiError
         ? caught.message
+        : caught instanceof Error && caught.message.startsWith("Clarification is too long")
+          ? caught.message
         : "The backend could not complete this answer. Please try again.");
     } finally {
       setPendingQuestion(null);
@@ -418,6 +448,11 @@ export default function HomePage() {
             </p>
           )}
           <form onSubmit={handleSubmit}>
+            {awaitingClarification && (
+              <p className="mb-2 text-xs text-amber-200">
+                Reply with the card names to continue the original question, or start a new chat for a different question.
+              </p>
+            )}
             <label htmlFor="rules-question" className="sr-only">Rules question</label>
             <textarea
               ref={textareaRef}
@@ -428,7 +463,7 @@ export default function HomePage() {
               maxLength={MAX_QUESTION_LENGTH}
               disabled={!ready || loading}
               rows={3}
-              placeholder="Describe the interaction and game state…"
+              placeholder={awaitingClarification ? "Clarify the card names…" : "Describe the interaction and game state…"}
               className="min-h-24 w-full resize-y rounded border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-600 focus:border-sky-500 disabled:opacity-60"
             />
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2">

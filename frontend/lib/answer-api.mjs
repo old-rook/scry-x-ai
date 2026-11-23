@@ -6,6 +6,7 @@ const SAFE_ANSWER_ERRORS = {
   card_provider_unavailable: "Card evidence is temporarily unavailable.",
   card_provider_rate_limited: "Card evidence is temporarily unavailable.",
   card_provider_timeout: "Card evidence retrieval timed out.",
+  card_catalog_unavailable: "The card-name catalog is unavailable. Please try again later.",
   answer_evidence_unavailable: "Answer evidence is temporarily unavailable.",
 };
 
@@ -67,6 +68,31 @@ function isRuleSource(value) {
     boundedString(value.ruleset_version, 100);
 }
 
+export function isAnswerCard(value) {
+  return isRecord(value) &&
+    boundedString(value.id, 300) &&
+    boundedString(value.name, 200) &&
+    (value.scryfall_uri == null || isHttpUrl(value.scryfall_uri)) &&
+    (value.mana_cost == null || boundedString(value.mana_cost, 500, true)) &&
+    (value.type_line == null || boundedString(value.type_line, 300, true)) &&
+    (value.oracle_text == null || boundedString(value.oracle_text, 2000, true)) &&
+    isRecord(value.image_urls) &&
+    Object.keys(value.image_urls).length <= 8 &&
+    Object.values(value.image_urls).every(isHttpUrl);
+}
+
+export function isCardClarification(value) {
+  return isRecord(value) &&
+    boundedString(value.question, 5000) &&
+    (value.clarification == null || boundedString(value.clarification, 3600)) &&
+    (value.card_names === undefined ||
+      (Array.isArray(value.card_names) && value.card_names.length <= 20 &&
+        value.card_names.every((name) => boundedString(name, 200)))) &&
+    Array.isArray(value.suggestions) &&
+    value.suggestions.length <= 5 &&
+    value.suggestions.every((name) => boundedString(name, 200));
+}
+
 export function isAnswerResponse(value) {
   return isRecord(value) &&
     boundedString(value.answer_id, 200) &&
@@ -79,6 +105,9 @@ export function isAnswerResponse(value) {
     Array.isArray(value.card_rulings) &&
     value.card_rulings.length <= 40 &&
     value.card_rulings.every(isAnswerSource) &&
+    (value.cards === undefined ||
+      (Array.isArray(value.cards) && value.cards.length <= 3 && value.cards.every(isAnswerCard))) &&
+    (value.clarification == null || isCardClarification(value.clarification)) &&
     Array.isArray(value.additional_considerations) &&
     value.additional_considerations.length <= 5 &&
     value.additional_considerations.every((item) => boundedString(item, 2000)) &&

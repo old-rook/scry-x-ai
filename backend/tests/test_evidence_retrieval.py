@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+import pytest
 
 from app.providers.scryfall import ScryfallProvider
 from app.rules.service import RulesService
@@ -13,6 +14,7 @@ from app.services.evidence_retrieval import (
     MAX_QUESTION_LENGTH,
     MAX_RULE_RESULTS,
     MAX_TOTAL_RULE_TEXT_LENGTH,
+    CardResolutionError,
     extract_card_name_candidates,
     retrieve_evidence,
 )
@@ -42,6 +44,10 @@ def rules_document() -> bytes:
                     lines.append(
                         "601.2. To cast a spell, a player chooses its modes, targets, and divisions."
                     )
+                elif rule_section == 700 and number == 5:
+                    lines.append(
+                        "700.5. Devotion to a color counts that color's mana symbols in permanents' mana costs."
+                    )
                 else:
                     lines.append(
                         f"{rule_section}.{number}. Sample procedure for section {rule_section}."
@@ -54,6 +60,19 @@ def rules_document() -> bytes:
             "702.19. Trample",
             "702.19a Trample modifies how an attacking creature assigns combat damage. (See rule 510, Combat Damage Step.)",
             "702.19b The controller of an attacking creature with trample assigns lethal damage to blockers before assigning excess damage to the player it attacks. This occurs during the same combat damage step.",
+            "702.28. Shadow",
+            "702.28a Shadow is an evasion ability.",
+            "702.28b Creatures with shadow can block only creatures with shadow.",
+            "701.6. Counter",
+            "701.6a To counter a spell or ability means to cancel it.",
+            "701.6b A countered ability doesn't refund costs.",
+            "112.1 A spell is a card on the stack.",
+            "115.1a The target of an instant spell is chosen as the spell is cast.",
+            "117.1a A player may cast an instant spell any time they have priority.",
+            "117.3c A player receives priority after casting a spell.",
+            "117.3d When a player passes, the next player receives priority.",
+            "117.4 If all players pass, the top spell resolves.",
+            "601.2c The player chooses an appropriate object for each target.",
             "510.1a Each attacking creature and blocking creature assigns combat damage equal to its power.",
             "510.1c A blocked creature assigns combat damage to the creatures blocking it.",
             "120.6 Damage marked on a creature is lethal if it is equal to or greater than its toughness.",
@@ -65,11 +84,22 @@ def rules_document() -> bytes:
     lines.extend(
         [
             "613.1d Layer 4: Type-changing effects are applied.",
+            "613.1f Layer 6: Ability-adding and ability-removing effects are applied.",
+            "613.1g Layer 7: Power- and toughness-changing effects are applied.",
+            "613.4b Layer 7b: Effects set power and toughness to a specific value.",
+            "613.5 The application of continuous effects is continually performed.",
+            "613.6 An effect applied in one layer continues in later layers even if the ability is removed.",
+            "613.7 Effects within the same layer are usually applied in timestamp order.",
+            "613.8a An effect may depend on another effect in the same layer.",
+            "613.8b Dependent effects wait until the effects they depend on are applied.",
+            "700.5a Devotion is calculated before other effects modify characteristics.",
             "305.7 Land subtypes set by an effect replace old land subtypes.",
             "305.8 Lands without the basic supertype are nonbasic.",
             "715.2 A chapter symbol represents a chapter ability.",
             "715.3 Sagas use lore counters to track their progress.",
             "715.4 A Saga with no chapter abilities is not sacrificed by its final chapter.",
+            "605.3b An activated mana ability doesn't go on the stack and can't be countered.",
+            "605.4a A triggered mana ability doesn't go on the stack and can't be countered.",
         ]
     )
     return "\n".join(lines).encode("utf-8")
@@ -184,20 +214,169 @@ def test_land_type_changing_effect_with_saga_retrieves_relevant_rules(
     service = make_rules_service(tmp_path)
     provider = FixtureCardProvider(rows=[blood_moon, urzas_saga])
     try:
-        result = asyncio.run(
-            retrieve_evidence(
-                "What happens if Blood Moon enters while Urza's Saga is on the field?",
-                service,
-                provider,
-            )
-        )
+        for question in (
+            "What happens when Blood Moon enters with Urza's Saga is on the field?",
+            "What happens if Blood Moon enters while Urza's Saga is on the field?",
+        ):
+            result = asyncio.run(retrieve_evidence(question, service, provider))
+            rule_ids = {rule.rule_id for rule in result.rules}
+            assert {"305.7", "305.8", "613.1d", "715.2", "715.3", "715.4"} <= rule_ids
+            assert len(result.rules) <= MAX_RULE_RESULTS
+            assert [card.name for card in result.cards] == ["Blood Moon", "Urza's Saga"]
     finally:
         asyncio.run(service.close())
 
-    rule_ids = {rule.rule_id for rule in result.rules}
-    assert {"305.7", "305.8", "613.1d", "715.2", "715.3", "715.4"} <= rule_ids
-    assert len(result.rules) <= MAX_RULE_RESULTS
-    assert [card.name for card in result.cards] == ["Blood Moon", "Urza's Saga"]
+
+def test_counterspell_interaction_retrieves_rules_from_card_text(tmp_path: Path) -> None:
+    provider = FixtureCardProvider(rows=[
+        {
+            "id": "dispel-id",
+            "name": "Dispel",
+            "type_line": "Instant",
+            "oracle_text": "Counter target instant spell.",
+        },
+        {
+            "id": "counterspell-id",
+            "name": "Counterspell",
+            "type_line": "Instant",
+            "oracle_text": "Counter target spell.",
+        },
+    ])
+    service = make_rules_service(tmp_path)
+    try:
+        for question in ("Can I Dispel a Counterspell?", ":an I Dispel a Counterspell?"):
+            result = asyncio.run(
+                retrieve_evidence(question, service, provider, ("Dispel", "Counterspell"))
+            )
+            assert [card.name for card in result.cards] == ["Dispel", "Counterspell"]
+            assert {
+                "112.1", "115.1a", "117.1a", "117.3c", "117.3d",
+                "117.4", "601.2c", "701.6a",
+            } <= {rule.rule_id for rule in result.rules}
+    finally:
+        asyncio.run(service.close())
+
+
+@pytest.mark.parametrize(
+    ("name", "type_line", "oracle_text"),
+    [
+        (
+            "Darksteel Mutation",
+            "Enchantment — Aura",
+            "Enchant creature\nEnchanted creature is an Insect artifact creature "
+            "with base power and toughness 0/1 and has indestructible, and it loses "
+            "all other abilities, card types, and creature types.",
+        ),
+        (
+            "Humility",
+            "Enchantment",
+            "All creatures lose all abilities and have base power and toughness 1/1.",
+        ),
+    ],
+)
+def test_ability_removal_retrieves_continuous_effect_layer_rules(
+    tmp_path: Path, name: str, type_line: str, oracle_text: str
+) -> None:
+    provider = FixtureCardProvider(rows=[
+        {
+            "id": "bello-id",
+            "name": "Bello, Bard of the Brambles",
+            "type_line": "Legendary Creature — Raccoon Bard",
+            "oracle_text": (
+                "During your turn, each non-Equipment artifact and non-Aura enchantment "
+                "you control with mana value 4 or greater is a 4/4 Elemental creature "
+                "in addition to its other types and has indestructible, haste, and "
+                '"Whenever this creature deals combat damage to a player, draw a card."'
+            ),
+        },
+        {
+            "id": "ability-removal-id",
+            "name": name,
+            "type_line": type_line,
+            "oracle_text": oracle_text,
+        },
+    ])
+    service = make_rules_service(tmp_path)
+    try:
+        result = asyncio.run(retrieve_evidence(
+            f"Does Bello, Bard of the Brambles still animate artifacts with {name}?",
+            service, provider, ("Bello, Bard of the Brambles", name),
+        ))
+        assert {"613.1d", "613.1f", "613.1g", "613.4b", "613.6"} <= {
+            rule.rule_id for rule in result.rules
+        }
+        assert len(result.rules) <= MAX_RULE_RESULTS
+    finally:
+        asyncio.run(service.close())
+
+
+def test_basic_land_conversion_retrieves_dependency_and_devotion_rules(
+    tmp_path: Path,
+) -> None:
+    provider = FixtureCardProvider(rows=[
+        {
+            "id": "bello-id",
+            "name": "Bello, Bard of the Brambles",
+            "type_line": "Legendary Creature — Raccoon Bard",
+            "oracle_text": (
+                "During your turn, each non-Equipment artifact and non-Aura enchantment "
+                "you control with mana value 4 or greater is a 4/4 Elemental creature "
+                "in addition to its other types and has indestructible, haste, and "
+                '"Whenever this creature deals combat damage to a player, draw a card."'
+            ),
+        },
+        {
+            "id": "purphoros-id",
+            "name": "Purphoros, God of the Forge",
+            "type_line": "Legendary Enchantment Creature — God",
+            "oracle_text": (
+                "Indestructible\nAs long as your devotion to red is less than five, "
+                "Purphoros isn't a creature.\nWhenever another creature you control enters, "
+                "Purphoros deals 2 damage to each opponent.\n"
+                "{2}{R}: Creatures you control get +1/+0 until end of turn."
+            ),
+        },
+        {
+            "id": "song-id",
+            "name": "Song of the Dryads",
+            "type_line": "Enchantment — Aura",
+            "oracle_text": "Enchant permanent\nEnchanted permanent is a colorless Forest land.",
+        },
+    ])
+    service = make_rules_service(tmp_path)
+    try:
+        result = asyncio.run(retrieve_evidence(
+            "I have Bello, Bard of the Brambles and Purphoros, God of the Forge on "
+            "the field. An opponent casts Song of the Dryads, targeting my Bello. "
+            "During my turn, will Purphoros become a creature?",
+            service, provider,
+            ("Bello, Bard of the Brambles", "Purphoros, God of the Forge", "Song of the Dryads"),
+        ))
+        assert {
+            "305.7", "613.1d", "613.6", "613.7", "613.8a", "613.8b",
+            "700.5", "700.5a",
+        } <= {rule.rule_id for rule in result.rules}
+        assert len(result.rules) <= MAX_RULE_RESULTS
+    finally:
+        asyncio.run(service.close())
+
+
+def test_generic_mana_ability_question_retrieves_relevant_rules_without_card_search(
+    tmp_path: Path,
+) -> None:
+    service = make_rules_service(tmp_path)
+    provider = FixtureCardProvider(rows=[])
+    try:
+        for question in ("Can I counter a mana ability?", "Can I counter a mana abillity?"):
+            result = asyncio.run(retrieve_evidence(question, service, provider))
+            assert {"605.3b", "605.4a"} <= {rule.rule_id for rule in result.rules}
+            assert result.cards == ()
+        shadow = asyncio.run(retrieve_evidence("What is shadow?", service, provider))
+        assert "702.28a" in {rule.rule_id for rule in shadow.rules}
+        assert shadow.cards == ()
+        assert provider.queries == []
+    finally:
+        asyncio.run(service.close())
 
 
 def test_explicit_rule_result_count_is_bounded(tmp_path: Path) -> None:
@@ -340,3 +519,32 @@ def test_no_reliable_candidate_means_no_card_search_or_evidence(tmp_path: Path) 
 
     assert result.cards == ()
     assert provider.queries == []
+
+
+def test_ambiguous_face_name_requires_a_full_card_name(tmp_path: Path) -> None:
+    provider = FixtureCardProvider(rows=[
+        {"id": "split", "name": "Fire // Ice", "oracle_text": "Split card."},
+        {"id": "other", "name": "Fire // Flame", "oracle_text": "Another card."},
+    ])
+    service = make_rules_service(tmp_path)
+    try:
+        with pytest.raises(CardResolutionError) as caught:
+            asyncio.run(retrieve_evidence("Fire", service, provider, ("Fire",)))
+        assert caught.value.suggestions == ("Fire // Ice", "Fire // Flame")
+    finally:
+        asyncio.run(service.close())
+
+
+def test_exact_full_card_name_takes_precedence_over_matching_face(tmp_path: Path) -> None:
+    provider = FixtureCardProvider(rows=[
+        {"id": "split", "name": "Emeritus of Conflict // Lightning Bolt", "oracle_text": "Split card."},
+        CARD,
+    ])
+    service = make_rules_service(tmp_path)
+    try:
+        result = asyncio.run(retrieve_evidence(
+            "Can Lightning Bolt target?", service, provider, ("Lightning Bolt",)
+        ))
+        assert [card.name for card in result.cards] == ["Lightning Bolt"]
+    finally:
+        asyncio.run(service.close())

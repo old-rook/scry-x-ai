@@ -31,7 +31,7 @@ class CardDetail(StrictBaseModel):
 
 
 class CardSearchRequest(StrictBaseModel):
-    q: str = Field(min_length=1, max_length=200)
+    q: str = Field(min_length=1, max_length=403)
     limit: StrictInt = Field(default=10, ge=1, le=100)
 
     @field_validator("q")

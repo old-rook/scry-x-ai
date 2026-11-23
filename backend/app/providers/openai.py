@@ -61,7 +61,16 @@ class OpenAIProvider:
             ],
             "max_completion_tokens": request.max_output_tokens,
         }
-        if request.response_format == "json_object":
+        if request.response_schema is not None:
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "grounded_answer",
+                    "strict": True,
+                    "schema": request.response_schema,
+                },
+            }
+        elif request.response_format == "json_object":
             body["response_format"] = {"type": "json_object"}
         try:
             response = await self._client.post(

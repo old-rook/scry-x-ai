@@ -1,4 +1,5 @@
 import asyncio
+import gzip
 import json
 import time
 from datetime import datetime, timezone
@@ -6,12 +7,14 @@ from pathlib import Path
 from tempfile import mkdtemp
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.main import create_app
 from app.schemas.cards import CardSearchRequest
 from app.providers.scryfall import ScryfallProvider
+from app.providers.errors import CardProviderError
 from app.rules.service import RulesService
 
 
@@ -32,9 +35,244 @@ CARD = {
     "updated_at": "2026-01-02T03:04:05.000Z",
 }
 
+BULK_URI = "https://data.scryfall.io/oracle-cards/oracle-cards-test.jsonl.gz"
+
+
+class MockByteStream(httpx.AsyncByteStream):
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+
+    async def __aiter__(self):
+        for offset in range(0, len(self.content), 17):
+            yield self.content[offset : offset + 17]
+
+
+def bulk_transport(archive: bytes, **metadata_overrides: object) -> httpx.MockTransport:
+    metadata = {
+        "object": "bulk_data",
+        "type": "oracle_cards",
+        "jsonl_download_uri": BULK_URI,
+        "compressed_size": len(archive),
+        **metadata_overrides,
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.scryfall.com":
+            assert request.url.path == "/bulk-data/oracle-cards"
+            return httpx.Response(200, stream=MockByteStream(json.dumps(metadata).encode()))
+        assert str(request.url) == BULK_URI
+        return httpx.Response(200, stream=MockByteStream(archive))
+
+    return httpx.MockTransport(handle)
+
+
+def test_card_name_catalog_validates_provider_response() -> None:
+    async def exercise() -> None:
+        archive = gzip.compress(b'{"name":"Sol Ring"}\n{"name":"Lightning Bolt"}\n')
+        provider = ScryfallProvider(transport=bulk_transport(archive))
+        try:
+            assert await provider.get_card_names() == ["Sol Ring", "Lightning Bolt"]
+        finally:
+            await provider.close()
+
+    asyncio.run(exercise())
+
+
+def test_bulk_names_include_distinct_faces() -> None:
+    rows = [
+        {"name": "Fire // Ice", "card_faces": [{"name": "Fire"}, {"name": "Ice"}]},
+        {"name": "Fire", "card_faces": [{"name": "Fire"}]},
+        {"name": "Sol Ring"},
+    ]
+    archive = gzip.compress("\n".join(map(json.dumps, rows)).encode())
+
+    async def exercise() -> None:
+        provider = ScryfallProvider(transport=bulk_transport(archive))
+        try:
+            assert await provider.get_card_names() == ["Fire // Ice", "Fire", "Ice", "Sol Ring"]
+        finally:
+            await provider.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    "archive",
+    [
+        b"not gzip",
+        gzip.compress(b'{"name":"Sol Ring"}\n')[:-4],
+        gzip.compress(b'{"name":"Sol Ring"}\n')[:-8] + b"\x00" * 8,
+        gzip.compress(b'{"name":\n'),
+        gzip.compress(b'{"name":"Sol Ring","card_faces":[{}]}\n'),
+        gzip.compress(b""),
+        gzip.compress(b'{"name":"Sol Ring"}\n\n'),
+        gzip.compress('{"name":"Sol Ring"}\n'.encode("utf-16")),
+        gzip.compress(b'{"name":"Sol Ring","other":NaN}\n'),
+    ],
+)
+def test_bulk_rejects_malformed_or_truncated_archive(archive: bytes) -> None:
+    async def exercise() -> None:
+        provider = ScryfallProvider(transport=bulk_transport(archive))
+        try:
+            with pytest.raises(CardProviderError) as caught:
+                await provider.get_card_names()
+            assert caught.value.code == "malformed_provider_response"
+        finally:
+            await provider.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "http://data.scryfall.io/a.jsonl.gz",
+        "https://data.scryfall.io.evil.test/a.jsonl.gz",
+        "https://user@data.scryfall.io/a.jsonl.gz",
+        "https://data.scryfall.io:444/a.jsonl.gz",
+        "https://data.scryfall.io/../a.jsonl.gz",
+        "https://data.scryfall.io/%2e%2e/a.jsonl.gz",
+        "https://data.scryfall.io/a.jsonl.gz?token=secret",
+        "https://data.scryfall.io/a.json",
+        "https://data.scryfall.io/a.jsonl.gz#fragment",
+    ],
+)
+def test_bulk_rejects_unsafe_uri_before_download(uri: str) -> None:
+    async def exercise() -> None:
+        provider = ScryfallProvider(transport=bulk_transport(b"unused", jsonl_download_uri=uri))
+        try:
+            with pytest.raises(CardProviderError) as caught:
+                await provider.get_card_names()
+            assert caught.value.code == "malformed_provider_response"
+        finally:
+            await provider.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"object": "catalog"},
+        {"type": "default_cards"},
+        {"compressed_size": True},
+        {"compressed_size": 0},
+        {"compressed_size": 256 * 1024 * 1024 + 1},
+        {"compressed_size": 1},
+        {"compressed_size": 1000},
+    ],
+)
+def test_bulk_rejects_invalid_metadata_or_size(overrides: dict[str, object]) -> None:
+    async def exercise() -> None:
+        archive = gzip.compress(b'{"name":"Sol Ring"}\n')
+        provider = ScryfallProvider(transport=bulk_transport(archive, **overrides))
+        try:
+            with pytest.raises(CardProviderError) as caught:
+                await provider.get_card_names()
+            assert caught.value.code == "malformed_provider_response"
+        finally:
+            await provider.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    ("limit_name", "limit"),
+    [
+        ("_max_bulk_metadata_bytes", 10),
+        ("_max_bulk_uncompressed_bytes", 10),
+        ("_max_bulk_line_bytes", 10),
+        ("_max_bulk_names", 1),
+    ],
+)
+def test_bulk_enforces_stream_and_parse_limits(limit_name: str, limit: int) -> None:
+    async def exercise() -> None:
+        archive = gzip.compress(b'{"name":"Sol Ring"}\n{"name":"Fire"}\n')
+        provider = ScryfallProvider(transport=bulk_transport(archive))
+        setattr(provider, limit_name, limit)
+        # Parser limits are class attributes because parsing runs in a worker.
+        original = getattr(ScryfallProvider, limit_name)
+        setattr(ScryfallProvider, limit_name, limit)
+        try:
+            with pytest.raises(CardProviderError) as caught:
+                await provider.get_card_names()
+            assert caught.value.code == "malformed_provider_response"
+        finally:
+            setattr(ScryfallProvider, limit_name, original)
+            await provider.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    ("failure", "code", "calls_expected"),
+    [
+        ("timeout", "provider_timeout", 2),
+        ("network", "provider_unavailable", 2),
+        ("rate_limit", "provider_rate_limited", 2),
+        ("redirect", "provider_unavailable", 1),
+    ],
+)
+def test_bulk_download_classifies_failures_without_following_redirects(
+    failure: str, code: str, calls_expected: int
+) -> None:
+    calls = 0
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        assert request.url.host == "api.scryfall.com"
+        if failure == "timeout":
+            raise httpx.ReadTimeout("private", request=request)
+        if failure == "network":
+            raise httpx.ConnectError("private", request=request)
+        if failure == "rate_limit":
+            return httpx.Response(429)
+        return httpx.Response(302, headers={"Location": "https://evil.test/stolen"})
+
+    async def exercise() -> None:
+        provider = ScryfallProvider(transport=httpx.MockTransport(handle))
+        try:
+            with pytest.raises(CardProviderError) as caught:
+                await provider.get_card_names()
+            assert caught.value.code == code
+            assert "private" not in str(caught.value)
+            assert calls == calls_expected
+        finally:
+            await provider.close()
+
+    asyncio.run(exercise())
+
+
+def test_bulk_download_has_total_deadline() -> None:
+    class SlowStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            await asyncio.sleep(1)
+            yield b"{}"
+
+    async def exercise() -> None:
+        provider = ScryfallProvider(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, stream=SlowStream()))
+        )
+        provider._bulk_download_timeout_seconds = 0.02
+        try:
+            with pytest.raises(CardProviderError) as caught:
+                await provider.get_card_names()
+            assert caught.value.code == "provider_timeout"
+        finally:
+            await provider.close()
+
+    asyncio.run(exercise())
+
 
 def api_client(transport: httpx.AsyncBaseTransport) -> TestClient:
     provider = ScryfallProvider(transport=transport)
+
+    async def isolated_names() -> list[str]:
+        return ["Test Card"]
+
+    # API tests exercise card requests, not the concurrent catalog refresh.
+    provider.get_card_names = isolated_names
     rules_dir = Path(mkdtemp(prefix="scry-x-rules-test-"))
     rules_dir.mkdir(parents=True, exist_ok=True)
     (rules_dir / "status.json").write_text(

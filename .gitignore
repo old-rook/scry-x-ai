@@ -41,6 +41,7 @@ yarn-error.log*
 **/data/*.db-wal
 **/data/*.staged
 backend/data/rules/
+backend/data/card-names.json
 
 # Logs and temporary files
 *.log

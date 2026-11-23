@@ -118,6 +118,7 @@ Request:
   "conversation_id": "optional UUID",
   "question": "What happens when...",
   "card_names": ["Optional normalized card names"],
+  "card_clarification": "Optional user clarification",
   "guest": true,
   "conversation_context": [
     {"role": "user", "content": "Recent guest question"},
@@ -126,7 +127,7 @@ Request:
 }
 ```
 
-`conversation_context` is optional and is limited to the last six user/assistant turns, 1,200 characters per turn, and 3,600 characters total. `guest=false` is rejected; registered answer/conversation support is not implied. The legacy `card_names` field is accepted for compatibility; POC card extraction is automatic and deterministic. `conversation_id` is returned as supplied but is not used as a server-side conversation key.
+`conversation_context` is optional and is limited to the last six user/assistant turns, 1,200 characters per turn, and 3,600 characters total. `guest=false` is rejected; registered answer/conversation support is not implied. `card_names` supplies explicit names that are also verified. `conversation_id` is returned as supplied but is not used as a server-side conversation key.
 
 Response:
 
@@ -138,6 +139,8 @@ Response:
   "explanation": "string",
   "comprehensive_rules": [],
   "card_rulings": [],
+  "cards": [],
+  "clarification": null,
   "additional_considerations": [],
   "model": "provider-neutral model identifier",
   "evidence_status": "complete | partial | insufficient",
@@ -145,9 +148,13 @@ Response:
 }
 ```
 
-The current guest-only endpoint does not persist, log, or sync questions or context. The response has a server-generated answer ID, structured verdict/explanation, cited rules and card evidence, considerations, selected provider model, evidence status, and disclaimer. `model` is `not_used` if no generation took place. Evidence status is computed by the server, not accepted from generated JSON. The `comprehensive_rules` metadata includes the fresh active ruleset's version, source checksum, and official source URL, and only returned cited rules. Card citations must be exact Scryfall evidence retrieved for the request.
+The current guest-only endpoint does not persist, log, or sync questions or context. The response has a server-generated answer ID, structured verdict/explanation, cited rules and card evidence, considerations, selected answer model, evidence status, and disclaimer. `cards` contains the matched Scryfall cards with their name, Oracle text, type, mana cost, source URL, and available image URLs, regardless of which sources the model cited. `model` is `not_used` if answer generation did not run; card extraction may still have used an AI model. Evidence status is computed by the server, not accepted from generated JSON. The `comprehensive_rules` metadata includes the active verified ruleset's version, source checksum, and official source URL, and only returned cited rules. Card citations must be exact Scryfall evidence retrieved for the request.
 
-The endpoint's bounded retriever uses explicit rule references and keyword overlap, plus exact Scryfall card-name matches extracted deterministically from the question. Extraction supports quoted names, title-like multiword phrases, and a bounded set of single-word candidates following question/action cues; exact normalized Scryfall name matching remains required. It retrieves at most eight rules and three card candidates, and bounds evidence and generation output. Rules are eligible only through `read_verified_rules()` freshness and supersession checks. No usable evidence skips generation. Generated output must be strict JSON with exact keys and bounded fields; invalid JSON, unsupported citations, or no usable citations yield a non-model-generated insufficient response with no citations and no second generation attempt. Citation IDs are mechanically validated against retrieved evidence, but semantic support/relevance of the generated explanation is not mechanically guaranteed. This is a retrieval POC, not semantic search or an official ruling service.
+The answer pipeline derives a local card-name index from Scryfall's `oracle_cards` bulk JSONL archive, including card-face names. An Aho-Corasick matcher searches questions case-insensitively with word boundaries and prefers longer overlapping names. Exact multiword names are retained independently of the AI; single-word matches need explicit card context or model validation. The configured AI also checks for misspellings alongside exact matches and selects relevant names from prior user turns. Unresolved names are compared with the index for suggestions; fuzzy matches are not silently accepted. When identification remains uncertain, a face name refers to multiple cards, or an exact card lookup fails, `clarification` contains the original question, accumulated clarification, explicit card names, and possible matches. The guest UI submits the original question with the user's clarification and can resume after reload. At most three cards are supported; each is checked against Scryfall and its Oracle text and rulings are retrieved before answer generation. No card searches or detail requests are made when no names are detected.
+
+The backend checks the catalog at startup and schedules its next refresh when the verified index reaches seven days old. The index is saved at `CARD_CATALOG_PATH` (default `backend/data/card-names.json`) and requires a writable persistent location. Legacy catalog files are not treated as Oracle bulk indexes and must be refreshed. A failed refresh uses the previous valid Oracle index with a disclaimer and retries after one hour; without one, requests fail safely. During refresh, requests can use an existing stale index without waiting. A clarified name absent from a stale index must still match Scryfall exactly. The mixed-misspelling check makes an additional model request under the same provider, audit, failover, and paid-use policy as answer generation. If that optional interpretation fails, unambiguous exact matches are retained and a limitation is disclosed; ambiguous single-word matches require clarification. AI extraction is probabilistic and can still miss a reference; users should include full card names and check the returned card list.
+
+The bounded retriever uses explicit rule references, card-text mechanic hints, and keyword overlap and retrieves at most eight rules. A card that counters a target spell prompts retrieval of rules for spells, targeting, priority, and countering; card text that removes all abilities prompts retrieval of relevant continuous-effect layer rules. Basic-land conversion text prompts retrieval of dependency and timestamp rules, and devotion rules when relevant. All hints are subject to the same limit. Rules are eligible only through verified rules snapshot checks. No usable evidence skips answer generation. Generated answers must be strict JSON with exact keys and bounded fields; the model is instructed to copy rule, Oracle-text, and ruling IDs from their respective evidence fields and to use a conditional verdict when missing game-state details can change the outcome. For answer generation, the OpenAI adapter requests a strict JSON Schema with the allowed evidence IDs; other adapters retain JSON-object mode. OpenAI-compatible endpoints and models must support structured outputs. Invalid JSON, unsupported citations, or no usable citations yield an insufficient response. Validation failures log a fixed reason code without the question, model output, or citation values. Citation IDs are mechanically validated against retrieved evidence, but semantic support/relevance of the generated explanation is not mechanically guaranteed. This is a retrieval POC, not semantic search or an official ruling service.
 
 ### 4.4 Conversations
 

@@ -219,6 +219,48 @@ def test_openai_adapter_uses_configured_prices_and_cached_token_usage() -> None:
     assert result.usage.reported_cost_usd == Decimal("0.0000435")
 
 
+def test_openai_adapter_requests_strict_response_schema() -> None:
+    import json
+
+    schema = {
+        "type": "object",
+        "properties": {"verdict": {"type": "string", "enum": ["yes", "no"]}},
+        "required": ["verdict"],
+        "additionalProperties": False,
+    }
+
+    def response(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["response_format"] == {
+            "type": "json_schema",
+            "json_schema": {"name": "grounded_answer", "strict": True, "schema": schema},
+        }
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"verdict":"yes"}'}}]},
+        )
+
+    async def execute() -> AIResult:
+        provider = OpenAIProvider(
+            "gpt-4o-mini",
+            "openai-secret",
+            input_price_per_million_usd=Decimal("0.15"),
+            cached_input_price_per_million_usd=Decimal("0.075"),
+            output_price_per_million_usd=Decimal("0.60"),
+            transport=httpx.MockTransport(response),
+        )
+        try:
+            return await provider.generate(AIRequest(
+                (AIMessage("user", "question"),),
+                response_format="json_object",
+                response_schema=schema,
+            ))
+        finally:
+            await provider.close()
+
+    assert asyncio.run(execute()).text == '{"verdict":"yes"}'
+
+
 def test_openai_adapter_leaves_unusable_usage_cost_unknown() -> None:
     async def execute() -> AIResult:
         provider = OpenAIProvider(

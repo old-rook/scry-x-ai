@@ -14,6 +14,7 @@ from app.schemas.answers import (
     AnswerRequest,
     AnswerResponse,
     AnswerSource,
+    CardClarification,
     ComprehensiveRuleSource,
     ConversationTurn,
 )
@@ -408,6 +409,7 @@ def test_frontend_contract_fixture_matches_openapi() -> None:
         "CardSearchResponse": CardSearchResponse.model_json_schema(),
         "AnswerRequest": AnswerRequest.model_json_schema(),
         "AnswerResponse": AnswerResponse.model_json_schema(),
+        "CardClarification": CardClarification.model_json_schema(),
         "AnswerSource": AnswerSource.model_json_schema(),
         "ComprehensiveRuleSource": ComprehensiveRuleSource.model_json_schema(),
         "ConversationTurn": ConversationTurn.model_json_schema(),
