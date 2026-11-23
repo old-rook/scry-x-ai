@@ -95,6 +95,18 @@ def create_app(
     app.include_router(answers_router, prefix=settings.api_v1_prefix)
     app.include_router(auth_router, prefix=settings.api_v1_prefix)
     app.include_router(admin_router, prefix=settings.api_v1_prefix)
+
+    @app.get("/api/debug/routes", include_in_schema=False)
+    async def debug_routes():
+        return {
+            "docs_url": app.docs_url,
+            "openapi_url": app.openapi_url,
+            "routes": [
+                getattr(route, "path", None)
+                for route in app.routes
+            ],
+        }
+
     return app
 
 
