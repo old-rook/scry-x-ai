@@ -15,7 +15,7 @@ Copy-Item ..\.env.example ..\.env
 python -m uvicorn app.main:app --reload
 ```
 
-The API is available at `http://127.0.0.1:8000/api/v1`. `/health` is also available.
+The API is available at `http://127.0.0.1:8000/api/v1`. Check service status at `http://127.0.0.1:8000/api/v1/health`; interactive API documentation is at `http://127.0.0.1:8000/api/docs`.
 
 Run tests:
 
@@ -23,6 +23,16 @@ Run tests:
 cd backend
 pytest
 ```
+
+### Frontend checks
+
+```powershell
+cd frontend
+npm test
+npm run lint
+```
+
+`npm test` runs the API-contract tests and a production build.
 
 ### Database
 
@@ -39,7 +49,7 @@ alembic upgrade head
 alembic downgrade base
 ```
 
-The initial migration creates only users, conversations, and messages. Repository and migration tests use in-memory SQLite until a PostgreSQL test instance is configured.
+The migration chain starts with users, conversations, and messages, then adds authentication identity and roles, AI provider audit records, and atomic monthly paid-usage budgets and reservations (capped at USD 20). These persistence tables do not provide registered conversation API or cross-device synchronization; that feature is not implemented. Repository and migration tests use in-memory SQLite until a PostgreSQL test instance is configured.
 
 ### Frontend
 
@@ -88,15 +98,15 @@ Set `NEXT_PUBLIC_API_BASE_URL` to the Railway public HTTPS API base ending in `/
 
 Configure the backend's database and secrets on Railway, not in Vercel. The backend also needs persistent storage for its rules and card-name catalog. Configure `CORS_ORIGINS` on Railway to include the Vercel frontend origin. After deployment, verify the frontend loads, the Railway `/api/v1/health` endpoint responds, and a guest question works. A real AI request may incur provider charges.
 
-The existing `.env.example` contains paid-model settings with `LLM_PAID_ENABLED=true`; do not copy it unchanged into production. Keep paid usage disabled unless explicitly approved, and keep all AI keys and budget settings on the backend.
+The checked-in `.env.example` currently selects a paid OpenAI model and sets `LLM_PAID_ENABLED=true`, although its API key is blank. Treat it as a configuration example, not a safe production default: set paid usage to `false` unless paid usage is explicitly approved, and keep all AI keys and budget settings on the backend.
 
 ## Configuration
 
 Copy `.env.example` to `.env`. The backend reads `APP_NAME`, `APP_ENV`, `API_V1_PREFIX`, `CORS_ORIGINS`, `RULES_*`, and optional server-only `LLM_*` settings. The frontend reads `NEXT_PUBLIC_API_BASE_URL`. Rules files are stored under `backend/data/rules` by default; `RULES_STORAGE_DIR` can select another persistent local directory. `RULES_REFRESH_MODE=local` enables the in-process background refresh (every 24 hours by default). Set it to `external` to disable recurring scheduling; stale startup verification remains enabled.
 
-AI provider setup is opt-in. Configure `LLM_PRIMARY_PROVIDER`/`LLM_PRIMARY_MODEL` and optionally one fallback with the provider/model identifiers selected by the operator. Every configured model must be explicitly classified as `free` or `paid`; confirm current pricing and eligibility with the provider rather than assuming a model is free. API keys use `LLM_OPENROUTER_API_KEY`, `LLM_GEMINI_API_KEY`, or `LLM_OPENAI_API_KEY` and must remain server-side. `LLM_OPENAI_BASE_URL` configures the OpenAI-compatible HTTPS endpoint; it defaults to `https://api.openai.com/v1`. The health availability value reflects local configuration/credential readiness, not a live upstream connectivity check.
+AI providers are optional to the application, but the checked-in `.env.example` selects an OpenAI route classified as paid and sets `LLM_PAID_ENABLED=true` (with a blank API key). If you copy it, do not add a key or send live requests until you have explicitly decided to enable paid usage; set `LLM_PAID_ENABLED=false` to block paid generation. Configure `LLM_PRIMARY_PROVIDER`/`LLM_PRIMARY_MODEL` and optionally one fallback with the provider/model identifiers selected by the operator. Every configured model must be explicitly classified as `free` or `paid`; confirm current pricing and eligibility with the provider rather than assuming a model is free. API keys use `LLM_OPENROUTER_API_KEY`, `LLM_GEMINI_API_KEY`, or `LLM_OPENAI_API_KEY` and must remain server-side. `LLM_OPENAI_BASE_URL` configures the OpenAI-compatible HTTPS endpoint; it defaults to `https://api.openai.com/v1`. The health availability value reflects local configuration/credential readiness, not a live upstream connectivity check.
 
-The current local answer configuration uses OpenAI `gpt-4o-mini`, classified as paid. Set the API key privately in `.env` or a secret manager; never put it in frontend variables or source control. The `.env` file uses these model settings:
+The checked-in `.env.example` currently selects OpenAI `gpt-4o-mini`, classified as paid. Set the API key privately in `.env` or a secret manager; never put it in frontend variables or source control. The example uses these model settings:
 
 ```text
 LLM_PRIMARY_PROVIDER=openai
