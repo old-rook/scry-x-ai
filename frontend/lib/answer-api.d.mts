@@ -5,6 +5,11 @@ export class ApiError extends Error {
   constructor(message: string, status: number);
 }
 
+export function resolveApiBaseUrl(
+  configured: string | null | undefined,
+  isDevelopment: boolean,
+): string;
+
 export function submitAnswerRequest(
   request: AnswerRequest,
   baseUrl: string,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { ApiError, submitAnswerRequest } from "../lib/answer-api.mjs";
+import { ApiError, resolveApiBaseUrl, submitAnswerRequest } from "../lib/answer-api.mjs";
 import {
   GUEST_HISTORY_KEY,
   GUEST_HISTORY_TTL_MS,
@@ -176,6 +176,29 @@ test("answer API sends the guest request to /answers and returns its response", 
   assert.deepEqual(JSON.parse(captured.options.body), request);
   assert.equal(result.verdict, "depends");
   assert.equal(result.comprehensive_rules[0].ruleset_version, "20261106");
+});
+
+test("API configuration is explicit in production and keeps the local development default", () => {
+  assert.equal(resolveApiBaseUrl(undefined, true), "http://localhost:8000/api/v1");
+  assert.equal(resolveApiBaseUrl("http://localhost:8000/api/v1/", true), "http://localhost:8000/api/v1");
+  assert.throws(
+    () => resolveApiBaseUrl(undefined, false),
+    (error) => error instanceof ApiError && /not configured/.test(error.message),
+  );
+  assert.equal(resolveApiBaseUrl("https://api.example.test/api/v1/", false), "https://api.example.test/api/v1");
+  for (const invalid of [
+    "", "ftp://example.test", "https://user:pass@example.test",
+    "https://example.test/?x=1", "https://example.test/#fragment",
+    "https://example.test/?", "https://example.test/#", "https://example.test /api",
+    "http://api.example.test/api/v1", "https://localhost./api/v1",
+    "https://api.localhost/api/v1", "https://127.0.0.2/api/v1",
+    "https://[::1]/api/v1", "https://[::ffff:127.0.0.1]/api/v1",
+  ]) {
+    assert.throws(
+      () => resolveApiBaseUrl(invalid, false),
+      (error) => error instanceof ApiError && /invalid/.test(error.message),
+    );
+  }
 });
 
 test("answer API maps backend failures to safe messages, never raw response bodies", async () => {

@@ -1,4 +1,4 @@
-import { ApiError, submitAnswerRequest } from "./answer-api.mjs";
+import { ApiError, resolveApiBaseUrl, submitAnswerRequest } from "./answer-api.mjs";
 
 export interface HealthResponse {
   status: "ok" | "degraded" | "unavailable";
@@ -160,15 +160,19 @@ export { ApiError } from "./answer-api.mjs";
 
 export async function submitAnswer(
   request: AnswerRequest,
-  baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1",
+  baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL,
 ): Promise<AnswerResponse> {
-  return (await submitAnswerRequest(request, baseUrl)) as AnswerResponse;
+  return (await submitAnswerRequest(
+    request,
+    resolveApiBaseUrl(baseUrl, process.env.NODE_ENV === "development"),
+  )) as AnswerResponse;
 }
 
 export async function getHealth(
-  baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1",
+  baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL,
 ): Promise<HealthResponse> {
-  const response = await fetch(`${baseUrl}/health`, {
+  const resolvedBaseUrl = resolveApiBaseUrl(baseUrl, process.env.NODE_ENV === "development");
+  const response = await fetch(`${resolvedBaseUrl}/health`, {
     headers: { Accept: "application/json" },
   });
 

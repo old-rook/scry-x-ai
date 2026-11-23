@@ -18,6 +18,31 @@ export class ApiError extends Error {
   }
 }
 
+export function resolveApiBaseUrl(configured, isDevelopment) {
+  if (configured === undefined || configured === null) {
+    if (isDevelopment) return "http://localhost:8000/api/v1";
+    throw new ApiError("The answer service is not configured. Contact the site administrator.", 0);
+  }
+  try {
+    const url = new URL(configured);
+    const hostname = url.hostname.toLowerCase().replace(/\.+$/, "");
+    const localHost = hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname.startsWith("127.") ||
+      /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/.test(hostname) ||
+      ["[::1]", "[::]", "[::ffff:0:0]", "0.0.0.0"].includes(hostname);
+    if (
+      /\s/.test(configured) ||
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username || url.password || configured.includes("?") || configured.includes("#") ||
+      (!isDevelopment && (url.protocol !== "https:" || localHost))
+    ) throw new Error("invalid URL");
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    throw new ApiError("The answer service URL is invalid. Contact the site administrator.", 0);
+  }
+}
+
 function safeAnswerError(status, code) {
   if (code && SAFE_ANSWER_ERRORS[code]) return SAFE_ANSWER_ERRORS[code];
   if (status === 404) return "The answer endpoint was not found. Check the API URL.";
@@ -125,7 +150,7 @@ export async function submitAnswerRequest(request, baseUrl, fetchImpl = fetch) {
       body: JSON.stringify(request),
     });
   } catch {
-    throw new ApiError("Cannot reach the Scry-X-AI backend. Start it and check the API URL.", 0);
+    throw new ApiError("Cannot reach the Scry-X-AI backend. Check its availability and API URL.", 0);
   }
 
   if (!response.ok) {
