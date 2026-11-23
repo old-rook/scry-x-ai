@@ -53,13 +53,40 @@ The frontend is available at `http://localhost:3000`.
 
 The guest chat keeps up to five recent conversations in versioned browser-local storage; it does not sync them to an account or persist them on the backend. Follow-up requests include only the latest six bounded user/assistant turns. Development defaults to `http://localhost:8000/api/v1`; set `NEXT_PUBLIC_API_BASE_URL` when the backend uses another address.
 
-## Vercel frontend deployment
+## Free-tier POC deployment
 
-The root [`vercel.json`](./vercel.json) configures Vercel Services so the Next.js frontend and FastAPI backend share a deployment and domain. Import the repository root into Vercel; do not set the project root to `frontend`. Vercel routes `/api/*` to the backend and other requests to the frontend.
+The POC can use a Vercel frontend, a Railway Free FastAPI service with a Railway volume, and Supabase Free PostgreSQL. Railway Free can sleep and stops services when its monthly allowance is exhausted; therefore the in-process scheduler cannot guarantee a rules check every 24 hours. Supabase Free can pause after inactivity. This setup is for a POC, not production; check current limits and pricing before provisioning.
 
-The Vercel build defaults `NEXT_PUBLIC_API_BASE_URL` to `/api/v1`, matching the backend's default `API_V1_PREFIX`. Override it only if the backend uses another prefix or is hosted separately; for an external backend, use its public HTTPS API base. This value is public browser configuration, so never put credentials or keys in it. Next.js embeds it at build time, so redeploy after changing it.
+1. Create a dedicated Supabase Free project. This application uses direct PostgreSQL access, not the Supabase Data API. Before creating application tables, disable the Data API for this dedicated project and verify it is disabled. The existing Alembic migrations do not configure Supabase row-level security or grants. Do not disable the Data API on a shared project without assessing other applications.
+2. Obtain the PostgreSQL connection string privately from Supabase. For an IPv4-only backend, use the session pooler. For SQLAlchemy, use the `postgresql+psycopg://` scheme and retain the host, port, username, and SSL options supplied by Supabase. Never commit or share the connection string.
+3. In Railway, create a Free service from this repository and set its root directory to `backend`. Set `RAILPACK_INSTALL_CMD` to `python -m pip install --target /app/vendor .` and `PYTHONPATH` to `/app/vendor` so the installed dependencies are available at runtime. Set the service start command to:
 
-Configure the backend service's database and secrets on the backend host, not in the frontend. The backend also needs persistent storage for its rules and card-name catalog. After deployment, verify the frontend loads, `/api/v1/health` responds, and a guest question works. A real AI request may incur provider charges.
+   ```sh
+   /bin/sh -c 'exec python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT"'
+   ```
+
+   Attach a Railway volume at `/data`, generate a public domain, and set these backend variables:
+
+   ```text
+   APP_ENV=production
+   RULES_STORAGE_DIR=/data/rules
+   CARD_CATALOG_PATH=/data/card-names.json
+   RULES_REFRESH_MODE=local
+   LLM_PAID_ENABLED=false
+   ```
+
+   Set `DATABASE_URL` privately to the Supabase connection string and `CORS_ORIGINS` to the exact HTTPS Vercel frontend origin. For multiple origins, separate them with commas; preview origins must be explicitly permitted. Configure an explicitly classified free AI model and its provider key only after verifying its current eligibility. A missing AI configuration prevents answer generation.
+4. The database schema must be initialized with the existing Alembic migrations before database-backed features work. Obtain approval for the schema change and check the target database and backups before running `alembic upgrade head` from `backend` with `DATABASE_URL` securely available. Do not run migrations against an existing shared database without reviewing their impact.
+5. In Vercel, deploy the repository-root project using the frontend-only service in `vercel.json`. Set `NEXT_PUBLIC_API_BASE_URL` to the Railway HTTPS URL ending in `/api/v1` in the Vercel environment settings before redeploying. This value is embedded at build time; the Vercel build fails if it is missing or is not a public HTTPS URL. The FastAPI backend is deployed separately on Railway.
+6. Check Railway's `/api/v1/health`, `/api/v1/cards?q=Lightning%20Bolt&limit=1`, and `/api/docs`, then test a guest question from Vercel. Health can remain degraded until the database is reachable and the rules are successfully verified. Check the rules status after startup; do not treat an unverified ruleset as current.
+
+## Vercel frontend-only deployment
+
+The root [`vercel.json`](./vercel.json) configures one Vercel service: the Next.js frontend. All requests are routed to that frontend service; no FastAPI backend is deployed to Vercel. The frontend calls the separately deployed Railway backend using `NEXT_PUBLIC_API_BASE_URL`.
+
+Set `NEXT_PUBLIC_API_BASE_URL` to the Railway public HTTPS API base ending in `/api/v1` for every Vercel environment you deploy. This value is public browser configuration, so never put credentials or keys in it. Next.js embeds it at build time, so redeploy after changing it. The frontend-only Vercel build rejects missing, same-origin, local, or non-HTTPS API URLs.
+
+Configure the backend's database and secrets on Railway, not in Vercel. The backend also needs persistent storage for its rules and card-name catalog. Configure `CORS_ORIGINS` on Railway to include the Vercel frontend origin. After deployment, verify the frontend loads, the Railway `/api/v1/health` endpoint responds, and a guest question works. A real AI request may incur provider charges.
 
 The existing `.env.example` contains paid-model settings with `LLM_PAID_ENABLED=true`; do not copy it unchanged into production. Keep paid usage disabled unless explicitly approved, and keep all AI keys and budget settings on the backend.
 
