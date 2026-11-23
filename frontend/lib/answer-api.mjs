@@ -23,6 +23,18 @@ export function resolveApiBaseUrl(configured, isDevelopment) {
     if (isDevelopment) return "http://localhost:8000/api/v1";
     throw new ApiError("The answer service is not configured. Contact the site administrator.", 0);
   }
+  if (configured.startsWith("/") && !configured.startsWith("//")) {
+    try {
+      if (/\s|[?#\\]/.test(configured)) throw new Error("invalid path");
+      const url = new URL(configured, "https://same-origin.invalid");
+      if (url.origin !== "https://same-origin.invalid" || url.pathname === "/") {
+        throw new Error("invalid path");
+      }
+      return url.pathname.replace(/\/+$/, "");
+    } catch {
+      throw new ApiError("The answer service URL is invalid. Contact the site administrator.", 0);
+    }
+  }
   try {
     const url = new URL(configured);
     const hostname = url.hostname.toLowerCase().replace(/\.+$/, "");

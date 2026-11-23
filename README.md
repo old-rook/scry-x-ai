@@ -55,15 +55,11 @@ The guest chat keeps up to five recent conversations in versioned browser-local 
 
 ## Vercel frontend deployment
 
-The Next.js frontend and FastAPI backend deploy separately. This project does not create or deploy a backend service, database, or Vercel project.
+The root [`vercel.json`](./vercel.json) configures Vercel Services so the Next.js frontend and FastAPI backend share a deployment and domain. Import the repository root into Vercel; do not set the project root to `frontend`. Vercel routes `/api/*` to the backend and other requests to the frontend.
 
-1. Deploy the backend separately with an externally reachable HTTPS URL and persistent storage for its rules and card-name catalog. Configure its database and secrets on the backend host, not in the frontend.
-2. Import the repository into Vercel and set the project **Root Directory** to `frontend`. Use the detected Next.js framework and its default `npm run build` command.
-3. Set `NEXT_PUBLIC_API_BASE_URL` for each Vercel environment to the backend's public HTTPS API base, for example `https://api.example.com/api/v1` (adjust the path to match `API_V1_PREFIX`). It is public browser configuration: never put credentials or keys in it. Next.js embeds it at build time, so redeploy after changing it. Production builds require a non-local HTTPS URL and show a configuration error instead of using localhost.
-4. Configure the backend's `CORS_ORIGINS` with the exact HTTPS frontend origins, separated by commas, for example `https://app.example.com,https://preview.example.com`. Do not include paths or wildcards. Preview deployment URLs may change and must be explicitly permitted, or assigned an appropriate stable origin.
-5. After deployment, verify the frontend loads, the backend health endpoint responds over HTTPS, and a guest question works. A real AI request may incur provider charges.
+The Vercel build defaults `NEXT_PUBLIC_API_BASE_URL` to `/api/v1`, matching the backend's default `API_V1_PREFIX`. Override it only if the backend uses another prefix or is hosted separately; for an external backend, use its public HTTPS API base. This value is public browser configuration, so never put credentials or keys in it. Next.js embeds it at build time, so redeploy after changing it.
 
-If Vercel system environment variables are enabled, the build also rejects a missing, invalid, non-HTTPS, or localhost API base. If they are disabled, the production frontend still rejects such configuration when making requests instead of silently falling back to localhost. A production build intended for use with a local HTTP backend should instead be run using the development server.
+Configure the backend service's database and secrets on the backend host, not in the frontend. The backend also needs persistent storage for its rules and card-name catalog. After deployment, verify the frontend loads, `/api/v1/health` responds, and a guest question works. A real AI request may incur provider charges.
 
 The existing `.env.example` contains paid-model settings with `LLM_PAID_ENABLED=true`; do not copy it unchanged into production. Keep paid usage disabled unless explicitly approved, and keep all AI keys and budget settings on the backend.
 

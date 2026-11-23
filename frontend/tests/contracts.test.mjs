@@ -178,16 +178,19 @@ test("answer API sends the guest request to /answers and returns its response", 
   assert.equal(result.comprehensive_rules[0].ruleset_version, "20261106");
 });
 
-test("API configuration is explicit in production and keeps the local development default", () => {
+test("API configuration supports same-origin production routing and keeps the local development default", () => {
   assert.equal(resolveApiBaseUrl(undefined, true), "http://localhost:8000/api/v1");
   assert.equal(resolveApiBaseUrl("http://localhost:8000/api/v1/", true), "http://localhost:8000/api/v1");
   assert.throws(
     () => resolveApiBaseUrl(undefined, false),
     (error) => error instanceof ApiError && /not configured/.test(error.message),
   );
+  assert.equal(resolveApiBaseUrl("/api/v1/", false), "/api/v1");
   assert.equal(resolveApiBaseUrl("https://api.example.test/api/v1/", false), "https://api.example.test/api/v1");
   for (const invalid of [
     "", "ftp://example.test", "https://user:pass@example.test",
+    "//api.example.test/api/v1", "/", "/api/v1?x=1", "/api/v1#fragment",
+    "/api\\v1",
     "https://example.test/?x=1", "https://example.test/#fragment",
     "https://example.test/?", "https://example.test/#", "https://example.test /api",
     "http://api.example.test/api/v1", "https://localhost./api/v1",
@@ -199,6 +202,15 @@ test("API configuration is explicit in production and keeps the local developmen
       (error) => error instanceof ApiError && /invalid/.test(error.message),
     );
   }
+});
+
+test("answer API requests can use the same-origin Vercel service route", async () => {
+  let requestedUrl;
+  await submitAnswerRequest({ question: "Question", guest: true }, "/api/v1", async (url) => {
+    requestedUrl = url;
+    return { ok: true, json: async () => sampleAnswer };
+  });
+  assert.equal(requestedUrl, "/api/v1/answers");
 });
 
 test("answer API maps backend failures to safe messages, never raw response bodies", async () => {

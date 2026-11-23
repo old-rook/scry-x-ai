@@ -2,21 +2,22 @@ import type { NextConfig } from "next";
 
 import { ApiError, resolveApiBaseUrl } from "./lib/answer-api.mjs";
 
-if (process.env.VERCEL === "1") {
-  if (!process.env.NEXT_PUBLIC_API_BASE_URL) {
-    throw new Error("Set NEXT_PUBLIC_API_BASE_URL to the HTTPS backend API base before deploying.");
-  }
+const isVercel = process.env.VERCEL === "1";
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? (isVercel ? "/api/v1" : undefined);
+
+if (isVercel && apiBaseUrl) {
   try {
-    resolveApiBaseUrl(process.env.NEXT_PUBLIC_API_BASE_URL, false);
+    resolveApiBaseUrl(apiBaseUrl, false);
   } catch (error) {
     if (error instanceof ApiError) {
-      throw new Error("NEXT_PUBLIC_API_BASE_URL must be a non-local HTTPS API URL without credentials, query, or fragment.");
+      throw new Error("NEXT_PUBLIC_API_BASE_URL must be a same-origin API path or a non-local HTTPS URL without credentials, query, or fragment.");
     }
     throw error;
   }
 }
 
 const nextConfig: NextConfig = {
+  ...(isVercel && apiBaseUrl ? { env: { NEXT_PUBLIC_API_BASE_URL: apiBaseUrl } } : {}),
   output: "standalone",
   outputFileTracingRoot: __dirname,
 };
