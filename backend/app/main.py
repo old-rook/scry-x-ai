@@ -62,6 +62,9 @@ def create_app(
         description="Unofficial Magic: The Gathering rules research assistant",
         version=settings.app_version,
         lifespan=lifespan,
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+        openapi_url="/api/openapi.json",
     )
     app.add_middleware(
         CORSMiddleware,
